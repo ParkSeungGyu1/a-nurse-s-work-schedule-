@@ -46,8 +46,7 @@ export default function WardsPage() {
       {
         onSuccess: (ward) => {
           queryClient.invalidateQueries({ queryKey: getListWardsQueryKey() });
-          setShowCreate(false);
-          form.reset();
+          setShowCreate(false); form.reset();
           toast({ title: "병동이 생성되었습니다." });
           navigate(`/wards/${ward.id}`);
         },
@@ -59,37 +58,30 @@ export default function WardsPage() {
   function handleDelete(wardId: number, e: React.MouseEvent) {
     e.preventDefault();
     if (!confirm("이 병동을 삭제하시겠습니까? 모든 관련 데이터가 삭제됩니다.")) return;
-    deleteWard.mutate(
-      { wardId },
-      {
-        onSuccess: () => {
-          queryClient.invalidateQueries({ queryKey: getListWardsQueryKey() });
-          toast({ title: "병동이 삭제되었습니다." });
-        },
-      }
-    );
+    deleteWard.mutate({ wardId }, {
+      onSuccess: () => { queryClient.invalidateQueries({ queryKey: getListWardsQueryKey() }); toast({ title: "병동이 삭제되었습니다." }); },
+    });
   }
 
   return (
-    <div className="p-6 max-w-5xl mx-auto" data-testid="wards-page">
-      <div className="flex items-center justify-between mb-6">
+    <div className="p-4 md:p-6 max-w-5xl mx-auto" data-testid="wards-page">
+      <div className="flex items-center justify-between mb-5 md:mb-6">
         <div>
-          <h1 className="text-2xl font-bold tracking-tight">병동 관리</h1>
-          <p className="text-muted-foreground text-sm mt-1">병동을 추가하고 설정을 관리합니다.</p>
+          <h1 className="text-xl md:text-2xl font-bold tracking-tight">병동 관리</h1>
+          <p className="text-muted-foreground text-xs md:text-sm mt-0.5">병동을 추가하고 설정을 관리합니다.</p>
         </div>
-        <Button onClick={() => setShowCreate(true)} data-testid="button-create-ward">
-          <Plus className="w-4 h-4 mr-1.5" /> 병동 추가
+        <Button onClick={() => setShowCreate(true)} size="sm" className="md:size-auto" data-testid="button-create-ward">
+          <Plus className="w-4 h-4 md:mr-1.5" />
+          <span className="hidden md:inline">병동 추가</span>
         </Button>
       </div>
 
       {isLoading ? (
-        <div className="grid gap-3 md:grid-cols-2 lg:grid-cols-3">
-          {Array.from({ length: 3 }).map((_, i) => (
-            <Skeleton key={i} className="h-36" />
-          ))}
+        <div className="grid gap-3 grid-cols-1 sm:grid-cols-2 lg:grid-cols-3">
+          {Array.from({ length: 3 }).map((_, i) => <Skeleton key={i} className="h-36" />)}
         </div>
       ) : wards && wards.length > 0 ? (
-        <div className="grid gap-3 md:grid-cols-2 lg:grid-cols-3">
+        <div className="grid gap-3 grid-cols-1 sm:grid-cols-2 lg:grid-cols-3">
           {wards.map((ward) => (
             <Card key={ward.id} className="group hover:shadow-md transition-shadow" data-testid={`card-ward-${ward.id}`}>
               <CardHeader className="pb-2">
@@ -106,7 +98,8 @@ export default function WardsPage() {
                   <button
                     onClick={(e) => handleDelete(ward.id, e)}
                     data-testid={`button-delete-ward-${ward.id}`}
-                    className="opacity-0 group-hover:opacity-100 text-muted-foreground hover:text-destructive transition-opacity p-1"
+                    className="opacity-0 group-hover:opacity-100 text-muted-foreground hover:text-destructive transition-opacity p-1 touch-manipulation"
+                    style={{ WebkitTapHighlightColor: "transparent" }}
                   >
                     <Trash2 className="w-3.5 h-3.5" />
                   </button>
@@ -137,10 +130,8 @@ export default function WardsPage() {
       )}
 
       <Dialog open={showCreate} onOpenChange={setShowCreate}>
-        <DialogContent data-testid="dialog-create-ward">
-          <DialogHeader>
-            <DialogTitle>새 병동 추가</DialogTitle>
-          </DialogHeader>
+        <DialogContent className="max-w-sm w-[calc(100%-2rem)] mx-auto" data-testid="dialog-create-ward">
+          <DialogHeader><DialogTitle>새 병동 추가</DialogTitle></DialogHeader>
           <form onSubmit={form.handleSubmit(onSubmit)} className="space-y-4">
             <div>
               <Label htmlFor="name">병동 이름</Label>
@@ -150,14 +141,8 @@ export default function WardsPage() {
             <div>
               <Label htmlFor="wardType">병동 유형</Label>
               <Select defaultValue="내과" onValueChange={(v) => form.setValue("wardType", v)}>
-                <SelectTrigger data-testid="select-ward-type">
-                  <SelectValue />
-                </SelectTrigger>
-                <SelectContent>
-                  {WARD_TYPES.map((t) => (
-                    <SelectItem key={t} value={t}>{t}</SelectItem>
-                  ))}
-                </SelectContent>
+                <SelectTrigger data-testid="select-ward-type"><SelectValue /></SelectTrigger>
+                <SelectContent>{WARD_TYPES.map((t) => <SelectItem key={t} value={t}>{t}</SelectItem>)}</SelectContent>
               </Select>
             </div>
             <div>

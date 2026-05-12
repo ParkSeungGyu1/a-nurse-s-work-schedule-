@@ -10,7 +10,7 @@ import { Button } from "@/components/ui/button";
 import { Badge } from "@/components/ui/badge";
 import { Skeleton } from "@/components/ui/skeleton";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
-import { ChevronLeft, ChevronRight, Zap, CheckCircle, Save, AlertCircle, AlertTriangle, Info, Plus, Moon } from "lucide-react";
+import { ChevronLeft, ChevronRight, Zap, CheckCircle, Save, AlertCircle, AlertTriangle, Info, Plus } from "lucide-react";
 import { useToast } from "@/hooks/use-toast";
 import { cn } from "@/lib/utils";
 import dayjs from "dayjs";
@@ -61,18 +61,15 @@ export default function SchedulePage() {
   const queryClient = useQueryClient();
   const { toast } = useToast();
 
-  // Auto-select first schedule for the selected month
   const monthSchedules = schedules?.filter((s) => s.yearMonth === yearMonth);
   const activeScheduleId = selectedScheduleId ?? monthSchedules?.[0]?.id ?? null;
   if (activeScheduleId && !selectedScheduleId) setSelectedScheduleId(activeScheduleId);
 
-  // Build date list
   const days = Array.from(
     { length: dayjs(yearMonth + "-01").daysInMonth() },
     (_, i) => `${yearMonth}-${String(i + 1).padStart(2, "0")}`
   );
 
-  // Build nurse list from entries
   const nurseIds = schedule ? [...new Set(schedule.entries.map((e) => e.nurseId))] : [];
   const nurses = nurseIds.map((id) => {
     const entry = schedule!.entries.find((e) => e.nurseId === id);
@@ -92,28 +89,24 @@ export default function SchedulePage() {
     setPendingEdits((prev) => ({ ...prev, [`${nurseId}:${date}`]: next }));
   }
 
-  async function handleCreate() {
-    createSchedule.mutate(
-      { wardId, data: { yearMonth, autoGenerate: false } },
-      {
-        onSuccess: (s) => {
-          queryClient.invalidateQueries({ queryKey: getListSchedulesQueryKey(wardId) });
-          setSelectedScheduleId(s.id);
-          toast({ title: "스케줄이 생성되었습니다." });
-        },
-      }
-    );
+  function handleCreate() {
+    createSchedule.mutate({ wardId, data: { yearMonth, autoGenerate: false } }, {
+      onSuccess: (s) => {
+        queryClient.invalidateQueries({ queryKey: getListSchedulesQueryKey(wardId) });
+        setSelectedScheduleId(s.id);
+        toast({ title: "스케줄이 생성되었습니다." });
+      },
+    });
   }
 
-  async function handleGenerate() {
+  function handleGenerate() {
     if (!selectedScheduleId) return;
     generateSchedule.mutate(
       { wardId, scheduleId: selectedScheduleId, data: { priorityMode: "balanced", overwriteManualEdits: false } },
       {
         onSuccess: () => {
           queryClient.invalidateQueries({ queryKey: getGetScheduleQueryKey(wardId, selectedScheduleId) });
-          setShowValidation(true);
-          setPendingEdits({});
+          setShowValidation(true); setPendingEdits({});
           toast({ title: "스케줄이 자동 생성되었습니다." });
         },
         onError: (e: Error) => toast({ title: "생성 실패: " + e.message, variant: "destructive" }),
@@ -121,42 +114,30 @@ export default function SchedulePage() {
     );
   }
 
-  async function handleValidate() {
+  function handleValidate() {
     if (!selectedScheduleId) return;
-    validateSchedule.mutate(
-      { wardId, scheduleId: selectedScheduleId },
-      {
-        onSuccess: () => {
-          queryClient.invalidateQueries({ queryKey: getGetScheduleQueryKey(wardId, selectedScheduleId) });
-          setShowValidation(true);
-          toast({ title: "검증이 완료되었습니다." });
-        },
-      }
-    );
+    validateSchedule.mutate({ wardId, scheduleId: selectedScheduleId }, {
+      onSuccess: () => {
+        queryClient.invalidateQueries({ queryKey: getGetScheduleQueryKey(wardId, selectedScheduleId) });
+        setShowValidation(true);
+        toast({ title: "검증이 완료되었습니다." });
+      },
+    });
   }
 
-  async function handleSave() {
+  function handleSave() {
     if (!selectedScheduleId || Object.keys(pendingEdits).length === 0) return;
-    const entries = Object.entries(pendingEdits).map(([key, shiftType]) => {
-      const [nurseId, date] = key.split(":");
-      return { nurseId: Number(nurseId), date, shiftType };
-    }).filter((e) => e.shiftType !== "");
-
-    if (entries.length === 0) {
-      setPendingEdits({});
-      return;
-    }
-
-    updateEntries.mutate(
-      { wardId, scheduleId: selectedScheduleId, data: { entries } },
-      {
-        onSuccess: () => {
-          queryClient.invalidateQueries({ queryKey: getGetScheduleQueryKey(wardId, selectedScheduleId) });
-          setPendingEdits({});
-          toast({ title: "변경사항이 저장되었습니다." });
-        },
-      }
-    );
+    const entries = Object.entries(pendingEdits)
+      .map(([key, shiftType]) => { const [nurseId, date] = key.split(":"); return { nurseId: Number(nurseId), date, shiftType }; })
+      .filter((e) => e.shiftType !== "");
+    if (entries.length === 0) { setPendingEdits({}); return; }
+    updateEntries.mutate({ wardId, scheduleId: selectedScheduleId, data: { entries } }, {
+      onSuccess: () => {
+        queryClient.invalidateQueries({ queryKey: getGetScheduleQueryKey(wardId, selectedScheduleId) });
+        setPendingEdits({});
+        toast({ title: "변경사항이 저장되었습니다." });
+      },
+    });
   }
 
   const prevMonth = () => { setYearMonth(dayjs(yearMonth + "-01").subtract(1, "month").format("YYYY-MM")); setSelectedScheduleId(null); };
@@ -167,14 +148,10 @@ export default function SchedulePage() {
   const warnings = validationResults.filter((v) => v.severity === "warning");
   const infos = validationResults.filter((v) => v.severity === "info");
 
-  // Count per day per shift for summary row
   function getDayShiftCount(date: string, shift: string) {
     if (!schedule) return 0;
     const fromEntries = schedule.entries.filter((e) => e.date === date && e.shiftType === shift).length;
-    const overrideCount = Object.entries(pendingEdits).filter(([k, v]) => {
-      const [, d] = k.split(":");
-      return d === date && v === shift;
-    }).length;
+    const overrideCount = Object.entries(pendingEdits).filter(([k, v]) => { const [, d] = k.split(":"); return d === date && v === shift; }).length;
     const overridedAway = Object.entries(pendingEdits).filter(([k, v]) => {
       const [nid, d] = k.split(":");
       if (d !== date) return false;
@@ -194,60 +171,69 @@ export default function SchedulePage() {
 
   return (
     <div className="flex flex-col h-full" data-testid="schedule-page">
-      {/* Toolbar */}
-      <div className="flex items-center gap-2 px-4 py-2 border-b bg-card flex-shrink-0" data-testid="schedule-toolbar">
-        <Button variant="ghost" size="sm" onClick={prevMonth}><ChevronLeft className="w-4 h-4" /></Button>
-        <span className="font-semibold text-sm w-24 text-center" data-testid="text-schedule-month">{yearMonth}</span>
-        <Button variant="ghost" size="sm" onClick={nextMonth}><ChevronRight className="w-4 h-4" /></Button>
+      {/* Toolbar — responsive wrap */}
+      <div
+        className="flex flex-wrap items-center gap-1.5 px-3 py-2 border-b bg-card flex-shrink-0"
+        data-testid="schedule-toolbar"
+      >
+        {/* Month nav */}
+        <div className="flex items-center gap-1">
+          <Button variant="ghost" size="sm" className="h-8 w-8 p-0" onClick={prevMonth}><ChevronLeft className="w-4 h-4" /></Button>
+          <span className="font-semibold text-sm w-20 text-center" data-testid="text-schedule-month">{yearMonth}</span>
+          <Button variant="ghost" size="sm" className="h-8 w-8 p-0" onClick={nextMonth}><ChevronRight className="w-4 h-4" /></Button>
+        </div>
 
         {monthSchedules && monthSchedules.length > 1 && (
           <Select value={String(selectedScheduleId ?? "")} onValueChange={(v) => setSelectedScheduleId(Number(v))}>
-            <SelectTrigger className="h-8 w-40 text-xs" data-testid="select-schedule">
-              <SelectValue placeholder="스케줄 선택" />
-            </SelectTrigger>
+            <SelectTrigger className="h-8 w-36 text-xs" data-testid="select-schedule"><SelectValue placeholder="스케줄 선택" /></SelectTrigger>
             <SelectContent>
-              {monthSchedules.map((s) => (
-                <SelectItem key={s.id} value={String(s.id)}>#{s.id} ({s.status})</SelectItem>
-              ))}
+              {monthSchedules.map((s) => <SelectItem key={s.id} value={String(s.id)}>#{s.id} ({s.status})</SelectItem>)}
             </SelectContent>
           </Select>
         )}
 
-        <div className="flex-1" />
+        {/* Spacer on larger screens */}
+        <div className="hidden sm:flex flex-1" />
 
-        {noSchedule && (
-          <Button size="sm" variant="outline" onClick={handleCreate} disabled={createSchedule.isPending} data-testid="button-create-schedule">
-            <Plus className="w-3.5 h-3.5 mr-1" /> 스케줄 생성
-          </Button>
-        )}
-        {selectedScheduleId && (
-          <>
-            <Button size="sm" variant="outline" onClick={handleGenerate} disabled={generateSchedule.isPending} data-testid="button-generate-schedule">
-              <Zap className="w-3.5 h-3.5 mr-1" />
-              {generateSchedule.isPending ? "생성 중..." : "자동 생성"}
+        {/* Action buttons — wrap on small screens */}
+        <div className="flex flex-wrap items-center gap-1.5">
+          {noSchedule && (
+            <Button size="sm" variant="outline" className="h-8 text-xs" onClick={handleCreate} disabled={createSchedule.isPending} data-testid="button-create-schedule">
+              <Plus className="w-3.5 h-3.5 mr-1" />스케줄 생성
             </Button>
-            <Button size="sm" variant="outline" onClick={handleValidate} disabled={validateSchedule.isPending} data-testid="button-validate-schedule">
-              <CheckCircle className="w-3.5 h-3.5 mr-1" />
-              {validateSchedule.isPending ? "검증 중..." : "검증"}
-            </Button>
-            {Object.keys(pendingEdits).length > 0 && (
-              <Button size="sm" onClick={handleSave} disabled={updateEntries.isPending} data-testid="button-save-schedule">
-                <Save className="w-3.5 h-3.5 mr-1" />
-                {updateEntries.isPending ? "저장 중..." : `저장 (${Object.keys(pendingEdits).length}건)`}
+          )}
+          {selectedScheduleId && (
+            <>
+              <Button size="sm" variant="outline" className="h-8 text-xs" onClick={handleGenerate} disabled={generateSchedule.isPending} data-testid="button-generate-schedule">
+                <Zap className="w-3.5 h-3.5 mr-1" />
+                <span className="hidden xs:inline">{generateSchedule.isPending ? "생성 중..." : "자동 생성"}</span>
+                <span className="xs:hidden">{generateSchedule.isPending ? "..." : "생성"}</span>
               </Button>
-            )}
-            <Button
-              size="sm"
-              variant={showValidation ? "default" : "outline"}
-              onClick={() => setShowValidation(!showValidation)}
-              data-testid="button-toggle-validation"
-            >
-              <AlertCircle className="w-3.5 h-3.5 mr-1" />
-              검증 패널
-              {criticals.length > 0 && <Badge variant="destructive" className="ml-1 h-4 text-[10px] px-1">{criticals.length}</Badge>}
-            </Button>
-          </>
-        )}
+              <Button size="sm" variant="outline" className="h-8 text-xs" onClick={handleValidate} disabled={validateSchedule.isPending} data-testid="button-validate-schedule">
+                <CheckCircle className="w-3.5 h-3.5 mr-1" />
+                <span className="hidden xs:inline">{validateSchedule.isPending ? "검증 중..." : "검증"}</span>
+                <span className="xs:hidden">{validateSchedule.isPending ? "..." : "검증"}</span>
+              </Button>
+              {Object.keys(pendingEdits).length > 0 && (
+                <Button size="sm" className="h-8 text-xs" onClick={handleSave} disabled={updateEntries.isPending} data-testid="button-save-schedule">
+                  <Save className="w-3.5 h-3.5 mr-1" />
+                  저장 ({Object.keys(pendingEdits).length})
+                </Button>
+              )}
+              <Button
+                size="sm"
+                variant={showValidation ? "default" : "outline"}
+                className="h-8 text-xs"
+                onClick={() => setShowValidation(!showValidation)}
+                data-testid="button-toggle-validation"
+              >
+                <AlertCircle className="w-3.5 h-3.5 mr-1" />
+                <span className="hidden sm:inline">검증 패널</span>
+                {criticals.length > 0 && <Badge variant="destructive" className="ml-1 h-4 text-[10px] px-1">{criticals.length}</Badge>}
+              </Button>
+            </>
+          )}
+        </div>
       </div>
 
       <div className="flex flex-1 min-h-0">
@@ -265,30 +251,21 @@ export default function SchedulePage() {
           )}
 
           {selectedScheduleId && isLoading && (
-            <div className="p-4 space-y-2">
-              {Array.from({ length: 8 }).map((_, i) => <Skeleton key={i} className="h-10" />)}
-            </div>
+            <div className="p-4 space-y-2">{Array.from({ length: 8 }).map((_, i) => <Skeleton key={i} className="h-10" />)}</div>
           )}
 
           {schedule && (
             <table className="border-collapse text-xs" style={{ minWidth: "max-content" }} data-testid="schedule-grid">
               <thead className="sticky top-0 z-20 bg-card">
                 <tr>
-                  {/* Sticky nurse name col */}
-                  <th className="sticky left-0 z-30 bg-card border-b border-r p-2 text-left font-medium text-muted-foreground min-w-[120px] w-[120px]">
+                  <th className="sticky left-0 z-30 bg-card border-b border-r p-2 text-left font-medium text-muted-foreground min-w-[90px] w-[90px] md:min-w-[120px] md:w-[120px]">
                     간호사
                   </th>
                   {days.map((date) => {
                     const dow = dayjs(date).day();
                     const isWeekend = dow === 0 || dow === 6;
                     return (
-                      <th
-                        key={date}
-                        className={cn(
-                          "border-b border-r p-1 text-center font-medium min-w-[32px] w-[32px]",
-                          isWeekend ? "bg-red-50/60 text-destructive" : "text-muted-foreground"
-                        )}
-                      >
+                      <th key={date} className={cn("border-b border-r p-1 text-center font-medium min-w-[28px] w-[28px]", isWeekend ? "bg-red-50/60 text-destructive" : "text-muted-foreground")}>
                         <div className="text-[10px] font-semibold">{date.slice(8)}</div>
                         <div className="text-[9px] opacity-70">{DAYS_KR[dow]}</div>
                       </th>
@@ -298,14 +275,10 @@ export default function SchedulePage() {
               </thead>
               <tbody>
                 {nurses.map((nurse) => (
-                  <tr
-                    key={nurse.id}
-                    className={cn("hover:bg-muted/20 border-b", EXP_COLORS[nurse.exp] ?? "")}
-                    data-testid={`row-schedule-${nurse.id}`}
-                  >
-                    <td className={cn("sticky left-0 z-10 border-r p-2 font-medium bg-inherit", EXP_COLORS[nurse.exp])}>
+                  <tr key={nurse.id} className={cn("hover:bg-muted/20 border-b", EXP_COLORS[nurse.exp] ?? "")} data-testid={`row-schedule-${nurse.id}`}>
+                    <td className={cn("sticky left-0 z-10 border-r p-1.5 md:p-2 font-medium bg-inherit text-xs md:text-xs", EXP_COLORS[nurse.exp])}>
                       <div className="flex items-center gap-1">
-                        <span className="truncate max-w-[90px]">{nurse.name}</span>
+                        <span className="truncate max-w-[70px] md:max-w-[90px]">{nurse.name}</span>
                         {nurse.exp === "new" && <Badge variant="outline" className="text-[9px] px-1 py-0 border-amber-400 text-amber-600">신</Badge>}
                         {nurse.exp === "senior" && <Badge variant="outline" className="text-[9px] px-1 py-0 border-teal-500 text-teal-600">선</Badge>}
                       </div>
@@ -315,29 +288,16 @@ export default function SchedulePage() {
                       const isPending = `${nurse.id}:${date}` in pendingEdits;
                       const dow = dayjs(date).day();
                       const isWeekend = dow === 0 || dow === 6;
-                      const hasIssue = validationResults.some(
-                        (v) => v.nurseId === nurse.id && v.date === date
-                      );
+                      const hasIssue = validationResults.some((v) => v.nurseId === nurse.id && v.date === date);
                       return (
                         <td
                           key={date}
-                          className={cn(
-                            "border-r p-0.5 text-center cursor-pointer select-none",
-                            isWeekend ? "bg-red-50/30" : "",
-                            isPending ? "ring-2 ring-primary ring-inset" : ""
-                          )}
+                          className={cn("border-r p-0.5 text-center cursor-pointer select-none", isWeekend ? "bg-red-50/30" : "", isPending ? "ring-2 ring-primary ring-inset" : "")}
                           onClick={() => cycleShift(nurse.id, date)}
                           data-testid={`cell-${nurse.id}-${date}`}
-                          title={`${nurse.name} ${date}`}
                         >
                           {shift && (
-                            <span
-                              className={cn(
-                                "inline-block rounded text-[10px] px-1 py-0.5 min-w-[20px] text-center transition-colors",
-                                SHIFT_COLORS[shift] ?? "text-muted-foreground",
-                                hasIssue && "ring-1 ring-destructive"
-                              )}
-                            >
+                            <span className={cn("inline-block rounded text-[10px] px-1 py-0.5 min-w-[20px] text-center transition-colors", SHIFT_COLORS[shift] ?? "text-muted-foreground", hasIssue && "ring-1 ring-destructive")}>
                               {shift === "OFF" ? "휴" : shift}
                             </span>
                           )}
@@ -346,19 +306,16 @@ export default function SchedulePage() {
                     })}
                   </tr>
                 ))}
-
                 {/* Summary row */}
                 <tr className="border-t-2 bg-muted/30 sticky bottom-0 z-10">
-                  <td className="sticky left-0 bg-muted/40 border-r p-2 font-semibold text-xs text-muted-foreground">합계</td>
+                  <td className="sticky left-0 bg-muted/40 border-r p-1.5 font-semibold text-xs text-muted-foreground">합계</td>
                   {days.map((date) => (
                     <td key={date} className="border-r p-0.5 text-center" data-testid={`col-summary-${date}`}>
                       <div className="flex flex-col gap-0.5">
                         {["D","E","N"].map((s) => {
                           const count = getDayShiftCount(date, s);
                           return count > 0 ? (
-                            <span key={s} className={cn("text-[9px] font-semibold leading-none",
-                              s === "D" ? "text-[hsl(var(--shift-d))]" : s === "E" ? "text-[hsl(var(--shift-e))]" : "text-[hsl(var(--shift-n))]"
-                            )}>{count}</span>
+                            <span key={s} className={cn("text-[9px] font-semibold leading-none", s === "D" ? "text-[hsl(var(--shift-d))]" : s === "E" ? "text-[hsl(var(--shift-e))]" : "text-[hsl(var(--shift-n))]")}>{count}</span>
                           ) : null;
                         })}
                       </div>
@@ -370,17 +327,24 @@ export default function SchedulePage() {
           )}
         </div>
 
-        {/* Validation panel */}
+        {/* Validation panel — slide over on mobile as overlay */}
         {showValidation && (
-          <div className="w-72 border-l bg-card flex-shrink-0 overflow-y-auto" data-testid="validation-panel">
-            <div className="p-3 border-b flex items-center justify-between">
+          <div className={cn(
+            "border-l bg-card flex-shrink-0 overflow-y-auto",
+            "w-full absolute inset-0 z-20 sm:relative sm:inset-auto sm:z-auto sm:w-64"
+          )} data-testid="validation-panel">
+            <div className="p-3 border-b flex items-center justify-between sticky top-0 bg-card z-10">
               <h3 className="font-semibold text-sm">검증 결과</h3>
-              <div className="flex items-center gap-1.5 text-xs">
-                {criticals.length > 0 && <span className="text-destructive font-semibold">{criticals.length}건 필수</span>}
-                {warnings.length > 0 && <span className="text-amber-600">{warnings.length}건 경고</span>}
+              <div className="flex items-center gap-2">
+                <div className="flex items-center gap-1.5 text-xs">
+                  {criticals.length > 0 && <span className="text-destructive font-semibold">{criticals.length}건 필수</span>}
+                  {warnings.length > 0 && <span className="text-amber-600">{warnings.length}건 경고</span>}
+                </div>
+                <Button variant="ghost" size="sm" className="h-7 w-7 p-0 sm:hidden" onClick={() => setShowValidation(false)}>
+                  <ChevronRight className="w-4 h-4" />
+                </Button>
               </div>
             </div>
-
             {validationResults.length === 0 ? (
               <div className="p-4 text-center text-muted-foreground text-sm">
                 <CheckCircle className="w-8 h-8 mx-auto mb-2 text-green-500 opacity-70" />
@@ -389,11 +353,7 @@ export default function SchedulePage() {
             ) : (
               <div className="p-2 space-y-1.5">
                 {[...criticals, ...warnings, ...infos].map((v) => (
-                  <div
-                    key={v.id}
-                    className={cn("flex gap-2 p-2 rounded border text-xs", SEVERITY_BG[v.severity] ?? "")}
-                    data-testid={`validation-issue-${v.id}`}
-                  >
+                  <div key={v.id} className={cn("flex gap-2 p-2 rounded border text-xs", SEVERITY_BG[v.severity] ?? "")} data-testid={`validation-issue-${v.id}`}>
                     {SEVERITY_ICONS[v.severity as keyof typeof SEVERITY_ICONS]}
                     <div className="flex-1 min-w-0">
                       <p className="text-foreground leading-snug">{v.message}</p>

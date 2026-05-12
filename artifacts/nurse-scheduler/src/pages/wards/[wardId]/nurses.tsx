@@ -42,6 +42,11 @@ type NurseForm = z.infer<typeof nurseSchema>;
 
 const ALL_SHIFTS = ["D", "E", "N"];
 const SHIFT_LABELS: Record<string, string> = { D: "데이", E: "이브닝", N: "나이트" };
+const SHIFT_COLORS: Record<string, string> = {
+  D: "bg-[hsl(var(--shift-d))]/20 text-[hsl(var(--shift-d))]",
+  E: "bg-[hsl(var(--shift-e))]/20 text-[hsl(var(--shift-e))]",
+  N: "bg-[hsl(var(--shift-n))]/20 text-[hsl(var(--shift-n))]",
+};
 
 export default function NursesPage() {
   const params = useParams<{ wardId: string }>();
@@ -96,138 +101,143 @@ export default function NursesPage() {
       monthlyNightLimit: data.monthlyNightLimit,
       notes: data.notes,
     };
-
     if (editingId) {
-      updateNurse.mutate(
-        { wardId, nurseId: editingId, data: payload },
-        {
-          onSuccess: () => {
-            queryClient.invalidateQueries({ queryKey: getListNursesQueryKey(wardId) });
-            setShowForm(false);
-            toast({ title: "간호사 정보가 수정되었습니다." });
-          },
-        }
-      );
+      updateNurse.mutate({ wardId, nurseId: editingId, data: payload }, {
+        onSuccess: () => { queryClient.invalidateQueries({ queryKey: getListNursesQueryKey(wardId) }); setShowForm(false); toast({ title: "간호사 정보가 수정되었습니다." }); },
+      });
     } else {
-      createNurse.mutate(
-        { wardId, data: payload },
-        {
-          onSuccess: () => {
-            queryClient.invalidateQueries({ queryKey: getListNursesQueryKey(wardId) });
-            setShowForm(false);
-            form.reset();
-            toast({ title: "간호사가 등록되었습니다." });
-          },
-        }
-      );
+      createNurse.mutate({ wardId, data: payload }, {
+        onSuccess: () => { queryClient.invalidateQueries({ queryKey: getListNursesQueryKey(wardId) }); setShowForm(false); form.reset(); toast({ title: "간호사가 등록되었습니다." }); },
+      });
     }
   }
 
   function handleDelete(nurseId: number) {
     if (!confirm("이 간호사를 삭제하시겠습니까?")) return;
-    deleteNurse.mutate(
-      { wardId, nurseId },
-      {
-        onSuccess: () => {
-          queryClient.invalidateQueries({ queryKey: getListNursesQueryKey(wardId) });
-          toast({ title: "삭제되었습니다." });
-        },
-      }
-    );
+    deleteNurse.mutate({ wardId, nurseId }, {
+      onSuccess: () => { queryClient.invalidateQueries({ queryKey: getListNursesQueryKey(wardId) }); toast({ title: "삭제되었습니다." }); },
+    });
   }
 
   const allowedShiftsWatch = form.watch("allowedShifts");
-
   function toggleShift(shift: string) {
     const current = form.getValues("allowedShifts");
-    if (current.includes(shift)) {
-      form.setValue("allowedShifts", current.filter((s) => s !== shift));
-    } else {
-      form.setValue("allowedShifts", [...current, shift]);
-    }
+    form.setValue("allowedShifts", current.includes(shift) ? current.filter((s) => s !== shift) : [...current, shift]);
   }
 
   return (
-    <div className="p-6 max-w-5xl mx-auto" data-testid="nurses-page">
-      <div className="flex items-center justify-between mb-6">
+    <div className="p-4 md:p-6 max-w-5xl mx-auto" data-testid="nurses-page">
+      <div className="flex items-center justify-between mb-4 md:mb-6">
         <div>
-          <h1 className="text-2xl font-bold tracking-tight">간호사 관리</h1>
-          <p className="text-muted-foreground text-sm mt-1">간호사 정보와 근무 조건을 관리합니다.</p>
+          <h1 className="text-xl md:text-2xl font-bold tracking-tight">간호사 관리</h1>
+          <p className="text-muted-foreground text-xs md:text-sm mt-0.5">간호사 정보와 근무 조건을 관리합니다.</p>
         </div>
-        <Button onClick={openCreate} data-testid="button-add-nurse">
-          <Plus className="w-4 h-4 mr-1.5" /> 간호사 추가
+        <Button onClick={openCreate} size="sm" className="md:size-auto" data-testid="button-add-nurse">
+          <Plus className="w-4 h-4 md:mr-1.5" />
+          <span className="hidden md:inline">간호사 추가</span>
         </Button>
       </div>
 
       {isLoading ? (
         <div className="space-y-2">{Array.from({ length: 5 }).map((_, i) => <Skeleton key={i} className="h-16" />)}</div>
       ) : nurses && nurses.length > 0 ? (
-        <Card>
-          <CardContent className="p-0">
-            <table className="w-full text-sm" data-testid="table-nurses">
-              <thead>
-                <tr className="border-b bg-muted/50">
-                  <th className="text-left p-3 font-medium text-muted-foreground">이름</th>
-                  <th className="text-left p-3 font-medium text-muted-foreground">사번</th>
-                  <th className="text-left p-3 font-medium text-muted-foreground">경력</th>
-                  <th className="text-left p-3 font-medium text-muted-foreground">허용 근무</th>
-                  <th className="text-left p-3 font-medium text-muted-foreground">월 야간 한도</th>
-                  <th className="text-left p-3 font-medium text-muted-foreground">특이사항</th>
-                  <th className="p-3" />
-                </tr>
-              </thead>
-              <tbody>
-                {nurses.map((nurse) => (
-                  <tr key={nurse.id} className="border-b last:border-0 hover:bg-muted/30 transition-colors" data-testid={`row-nurse-${nurse.id}`}>
-                    <td className="p-3 font-medium">
-                      <div className="flex items-center gap-2">
-                        {nurse.name}
-                        {nurse.isNightKeep && <span title="야간 고정"><Moon className="w-3.5 h-3.5 text-[hsl(var(--shift-n))]" /></span>}
-                        {nurse.isPregnant && <span title="임신"><Baby className="w-3.5 h-3.5 text-pink-500" /></span>}
+        <>
+          {/* Mobile: card list */}
+          <div className="md:hidden space-y-2" data-testid="nurses-mobile-list">
+            {nurses.map((nurse) => (
+              <Card key={nurse.id} data-testid={`row-nurse-${nurse.id}`}>
+                <CardContent className="p-3">
+                  <div className="flex items-start justify-between gap-2">
+                    <div className="min-w-0 flex-1">
+                      <div className="flex items-center gap-1.5 mb-1">
+                        <span className="font-semibold text-sm">{nurse.name}</span>
+                        <span className="text-xs text-muted-foreground">{nurse.employeeNumber}</span>
+                        {nurse.isNightKeep && <span title="야간 고정"><Moon className="w-3 h-3 text-[hsl(var(--shift-n))]" /></span>}
+                        {nurse.isPregnant && <span title="임신"><Baby className="w-3 h-3 text-pink-500" /></span>}
                       </div>
-                    </td>
-                    <td className="p-3 text-muted-foreground">{nurse.employeeNumber}</td>
-                    <td className="p-3">
-                      <span className={`text-xs font-semibold px-2 py-0.5 rounded-full ${EXPERIENCE_COLORS[nurse.experienceLevel] ?? ""}`}>
-                        {EXPERIENCE_LABELS[nurse.experienceLevel] ?? nurse.experienceLevel}
-                      </span>
-                    </td>
-                    <td className="p-3">
-                      <div className="flex gap-1">
-                        {ALL_SHIFTS.map((s) => (
-                          <span
-                            key={s}
-                            className={`text-xs px-1.5 py-0.5 rounded font-mono font-semibold ${
-                              (nurse.allowedShifts ?? []).includes(s)
-                                ? s === "D" ? "bg-[hsl(var(--shift-d))]/20 text-[hsl(var(--shift-d))]"
-                                  : s === "E" ? "bg-[hsl(var(--shift-e))]/20 text-[hsl(var(--shift-e))]"
-                                  : "bg-[hsl(var(--shift-n))]/20 text-[hsl(var(--shift-n))]"
-                                : "text-muted-foreground/30"
-                            }`}
-                          >
-                            {s}
+                      <div className="flex items-center gap-2 flex-wrap">
+                        <span className={`text-xs font-semibold px-1.5 py-0.5 rounded-full ${EXPERIENCE_COLORS[nurse.experienceLevel] ?? ""}`}>
+                          {EXPERIENCE_LABELS[nurse.experienceLevel] ?? nurse.experienceLevel}
+                        </span>
+                        <div className="flex gap-0.5">
+                          {ALL_SHIFTS.map((s) => (
+                            <span key={s} className={`text-xs px-1 py-0.5 rounded font-mono font-semibold ${(nurse.allowedShifts ?? []).includes(s) ? SHIFT_COLORS[s] : "text-muted-foreground/30"}`}>{s}</span>
+                          ))}
+                        </div>
+                        {nurse.monthlyNightLimit != null && (
+                          <span className="text-xs text-muted-foreground">야간 {nurse.monthlyNightLimit}회</span>
+                        )}
+                      </div>
+                    </div>
+                    <div className="flex items-center gap-1 flex-shrink-0">
+                      <Button size="sm" variant="ghost" className="h-7 w-7 p-0" onClick={() => openEdit(nurse)} data-testid={`button-edit-nurse-${nurse.id}`}>
+                        <Edit2 className="w-3.5 h-3.5" />
+                      </Button>
+                      <Button size="sm" variant="ghost" className="h-7 w-7 p-0 text-destructive" onClick={() => handleDelete(nurse.id)} data-testid={`button-delete-nurse-${nurse.id}`}>
+                        <Trash2 className="w-3.5 h-3.5" />
+                      </Button>
+                    </div>
+                  </div>
+                </CardContent>
+              </Card>
+            ))}
+          </div>
+
+          {/* Desktop: table */}
+          <Card className="hidden md:block">
+            <CardContent className="p-0">
+              <div className="overflow-x-auto">
+                <table className="w-full text-sm" data-testid="table-nurses">
+                  <thead>
+                    <tr className="border-b bg-muted/50">
+                      <th className="text-left p-3 font-medium text-muted-foreground">이름</th>
+                      <th className="text-left p-3 font-medium text-muted-foreground">사번</th>
+                      <th className="text-left p-3 font-medium text-muted-foreground">경력</th>
+                      <th className="text-left p-3 font-medium text-muted-foreground">허용 근무</th>
+                      <th className="text-left p-3 font-medium text-muted-foreground">월 야간 한도</th>
+                      <th className="text-left p-3 font-medium text-muted-foreground">특이사항</th>
+                      <th className="p-3" />
+                    </tr>
+                  </thead>
+                  <tbody>
+                    {nurses.map((nurse) => (
+                      <tr key={nurse.id} className="border-b last:border-0 hover:bg-muted/30 transition-colors" data-testid={`row-nurse-${nurse.id}`}>
+                        <td className="p-3 font-medium">
+                          <div className="flex items-center gap-2">
+                            {nurse.name}
+                            {nurse.isNightKeep && <span title="야간 고정"><Moon className="w-3.5 h-3.5 text-[hsl(var(--shift-n))]" /></span>}
+                            {nurse.isPregnant && <span title="임신"><Baby className="w-3.5 h-3.5 text-pink-500" /></span>}
+                          </div>
+                        </td>
+                        <td className="p-3 text-muted-foreground">{nurse.employeeNumber}</td>
+                        <td className="p-3">
+                          <span className={`text-xs font-semibold px-2 py-0.5 rounded-full ${EXPERIENCE_COLORS[nurse.experienceLevel] ?? ""}`}>
+                            {EXPERIENCE_LABELS[nurse.experienceLevel] ?? nurse.experienceLevel}
                           </span>
-                        ))}
-                      </div>
-                    </td>
-                    <td className="p-3 text-muted-foreground">{nurse.monthlyNightLimit !== null && nurse.monthlyNightLimit !== undefined ? `${nurse.monthlyNightLimit}회` : "-"}</td>
-                    <td className="p-3 text-muted-foreground text-xs">{nurse.notes ?? "-"}</td>
-                    <td className="p-3">
-                      <div className="flex items-center gap-1">
-                        <Button size="sm" variant="ghost" onClick={() => openEdit(nurse)} data-testid={`button-edit-nurse-${nurse.id}`}>
-                          <Edit2 className="w-3.5 h-3.5" />
-                        </Button>
-                        <Button size="sm" variant="ghost" className="text-destructive hover:text-destructive" onClick={() => handleDelete(nurse.id)} data-testid={`button-delete-nurse-${nurse.id}`}>
-                          <Trash2 className="w-3.5 h-3.5" />
-                        </Button>
-                      </div>
-                    </td>
-                  </tr>
-                ))}
-              </tbody>
-            </table>
-          </CardContent>
-        </Card>
+                        </td>
+                        <td className="p-3">
+                          <div className="flex gap-1">
+                            {ALL_SHIFTS.map((s) => (
+                              <span key={s} className={`text-xs px-1.5 py-0.5 rounded font-mono font-semibold ${(nurse.allowedShifts ?? []).includes(s) ? SHIFT_COLORS[s] : "text-muted-foreground/30"}`}>{s}</span>
+                            ))}
+                          </div>
+                        </td>
+                        <td className="p-3 text-muted-foreground">{nurse.monthlyNightLimit != null ? `${nurse.monthlyNightLimit}회` : "-"}</td>
+                        <td className="p-3 text-muted-foreground text-xs">{nurse.notes ?? "-"}</td>
+                        <td className="p-3">
+                          <div className="flex items-center gap-1">
+                            <Button size="sm" variant="ghost" onClick={() => openEdit(nurse)} data-testid={`button-edit-nurse-${nurse.id}`}><Edit2 className="w-3.5 h-3.5" /></Button>
+                            <Button size="sm" variant="ghost" className="text-destructive hover:text-destructive" onClick={() => handleDelete(nurse.id)} data-testid={`button-delete-nurse-${nurse.id}`}><Trash2 className="w-3.5 h-3.5" /></Button>
+                          </div>
+                        </td>
+                      </tr>
+                    ))}
+                  </tbody>
+                </table>
+              </div>
+            </CardContent>
+          </Card>
+        </>
       ) : (
         <Card className="text-center py-16 text-muted-foreground">
           <CardContent>
@@ -238,7 +248,7 @@ export default function NursesPage() {
       )}
 
       <Dialog open={showForm} onOpenChange={setShowForm}>
-        <DialogContent className="max-w-md" data-testid="dialog-nurse-form">
+        <DialogContent className="max-w-md w-[calc(100%-2rem)] mx-auto" data-testid="dialog-nurse-form">
           <DialogHeader>
             <DialogTitle>{editingId ? "간호사 수정" : "간호사 추가"}</DialogTitle>
           </DialogHeader>
@@ -257,9 +267,7 @@ export default function NursesPage() {
             <div>
               <Label>경력 구분</Label>
               <Select value={form.watch("experienceLevel")} onValueChange={(v) => form.setValue("experienceLevel", v as "new" | "experienced" | "senior")}>
-                <SelectTrigger data-testid="select-experience-level">
-                  <SelectValue />
-                </SelectTrigger>
+                <SelectTrigger data-testid="select-experience-level"><SelectValue /></SelectTrigger>
                 <SelectContent>
                   <SelectItem value="new">신규</SelectItem>
                   <SelectItem value="experienced">경력</SelectItem>
@@ -272,11 +280,7 @@ export default function NursesPage() {
               <div className="flex gap-3 mt-1">
                 {ALL_SHIFTS.map((s) => (
                   <label key={s} className="flex items-center gap-1.5 cursor-pointer">
-                    <Checkbox
-                      checked={allowedShiftsWatch.includes(s)}
-                      onCheckedChange={() => toggleShift(s)}
-                      data-testid={`checkbox-shift-${s}`}
-                    />
+                    <Checkbox checked={allowedShiftsWatch.includes(s)} onCheckedChange={() => toggleShift(s)} data-testid={`checkbox-shift-${s}`} />
                     <span className="text-sm">{SHIFT_LABELS[s]} ({s})</span>
                   </label>
                 ))}
@@ -285,23 +289,15 @@ export default function NursesPage() {
             </div>
             <div className="grid grid-cols-2 gap-3">
               <div className="flex items-center gap-2 pt-2">
-                <Controller
-                  control={form.control}
-                  name="isNightKeep"
-                  render={({ field }) => (
-                    <Checkbox checked={field.value} onCheckedChange={field.onChange} data-testid="checkbox-night-keep" id="nightKeep" />
-                  )}
-                />
+                <Controller control={form.control} name="isNightKeep" render={({ field }) => (
+                  <Checkbox checked={field.value} onCheckedChange={field.onChange} data-testid="checkbox-night-keep" id="nightKeep" />
+                )} />
                 <Label htmlFor="nightKeep" className="cursor-pointer">야간 고정</Label>
               </div>
               <div className="flex items-center gap-2 pt-2">
-                <Controller
-                  control={form.control}
-                  name="isPregnant"
-                  render={({ field }) => (
-                    <Checkbox checked={field.value} onCheckedChange={field.onChange} data-testid="checkbox-pregnant" id="pregnant" />
-                  )}
-                />
+                <Controller control={form.control} name="isPregnant" render={({ field }) => (
+                  <Checkbox checked={field.value} onCheckedChange={field.onChange} data-testid="checkbox-pregnant" id="pregnant" />
+                )} />
                 <Label htmlFor="pregnant" className="cursor-pointer">임신 중</Label>
               </div>
             </div>

@@ -1,0 +1,195 @@
+Build a production-quality Korean web platform for creating and managing 3-shift nurse schedules for hospital wards.
+
+Project goal:
+This is a scheduling platform used by nurses and ward managers. It should let each hospital or ward define their own detailed scheduling rules and automatically generate monthly shift schedules based on those settings. Do not hardcode a single universal rule set. Make the app highly configurable.
+
+Core product concept:
+- The platform is for nurse shift scheduling.
+- Shift types are D (07:00-15:00), E (15:00-23:00), N (23:00-07:00), OFF.
+- Each ward can configure its own staffing rules, nurse limits, and shift constraints.
+- The system should support automatic generation, validation, and manual editing of schedules.
+- This is not a generic HR app. It must feel purpose-built for nurse scheduling.
+
+Use this tech stack:
+- Next.js (App Router) with TypeScript
+- Tailwind CSS
+- shadcn/ui
+- Prisma
+- PostgreSQL
+- Zustand
+- React Hook Form
+- Zod
+- dayjs
+- Lucide React
+
+Design direction:
+Create a calm, professional, trustworthy medical operations dashboard.
+Avoid generic startup SaaS design.
+Avoid purple-heavy UI and avoid dark-mode-first styling.
+Prefer a bright interface with soft ivory or warm white backgrounds, deep teal, muted blue, slate, and sage accents.
+The UI should feel clean, organized, and reassuring for nurses who use it repeatedly during real scheduling work.
+
+Typography:
+Use a Korean-friendly modern font such as SUIT Variable or Pretendard Variable.
+Emphasize legibility, table readability, and visual hierarchy.
+Do not use default-looking typography stacks.
+
+Visual system:
+- Use CSS variables for colors, spacing, radius, and shadows.
+- Use subtle gradients or panel depth, not flat empty white pages.
+- Use soft status colors:
+  - D: blue
+  - E: amber/orange
+  - N: navy/indigo
+  - OFF: gray
+- Use meaningful motion only:
+  - light staggered panel entrance
+  - smooth hover/focus states
+  - subtle validation highlight animations
+- The interface must work well on both desktop and tablet widths.
+- Mobile should remain usable, but prioritize desktop/tablet because real schedule editing is grid-heavy.
+
+Important UX principles:
+- Nurses and ward managers should understand the app quickly.
+- Rules and schedule conflicts should be visible and understandable.
+- The app should reduce stress, not add complexity.
+- Schedule editing should be fast and visual.
+- Use plain Korean labels in the UI.
+
+Main screens to implement:
+1. Dashboard
+- Ward list
+- Monthly scheduling status
+- Recent schedules
+- Alert cards for unresolved conflicts
+
+2. Ward setup page
+- Ward name
+- Ward type
+- Shift time settings
+- Maximum nurse count
+- Shift types
+
+3. Nurse management page
+- Nurse list
+- Experience level
+- New nurse / experienced nurse
+- Night-keep flag
+- Pregnancy flag
+- Allowed shifts
+- Monthly night shift limit
+- Notes
+
+4. Rule settings page
+Configurable rule controls such as:
+- max consecutive work days
+- off days after consecutive work days
+- max consecutive night shifts
+- off days after night shifts
+- allow or block E to D next day
+- monthly max N shifts
+- new nurse ratio per shift
+- minimum experienced nurse count per shift
+- preceptor matching options
+- weekend fairness toggle
+- holiday fairness toggle
+Make these settings editable with toggles, segmented controls, number inputs, and dropdowns.
+
+5. Monthly staffing requirements page
+- Per-day D/E/N required headcount
+- Bulk edit by weekday
+- Copy settings across dates
+- Holiday overrides
+
+6. Personal requests page
+- Fixed off days
+- Preferred off days
+- Forbidden shifts
+- Education days
+- Annual leave
+- Hard constraints vs soft preferences
+
+7. Auto-generation page
+- Select month
+- Select ward
+- Generation priority mode
+- Generate schedule button
+- Regenerate all or partial week
+
+8. Schedule editor page
+- Main scheduling grid
+- Rows = nurses
+- Columns = dates
+- Cell values = D / E / N / OFF
+- Strong color coding
+- Drag or click edit
+- Sticky headers and sticky first column
+- Side panel with validation/conflict list
+- Highlight preceptor pairs, new nurses, night-keep nurses
+
+9. Export page
+- Print layout
+- PDF-ready layout
+- Excel export
+- Personal schedule view
+
+Validation panel behavior:
+Show issues by severity.
+- Critical: must fix
+- Warning: should review
+- Info: 참고
+Examples:
+- too many consecutive work days
+- too many consecutive night shifts
+- insufficient off after night shift
+- E followed by D
+- too many new nurses in one shift
+- understaffed shift
+- preceptor matching failed
+- nurse assigned to forbidden shift
+
+Architecture requirements:
+- Separate domain logic from UI.
+- Put schedule generation and validation logic in reusable services.
+- Avoid mixing business rules directly inside React components.
+- Build the project so that scheduling rules can be expanded later.
+
+Suggested app structure:
+- app/
+- components/
+- features/
+- lib/
+- prisma/
+- types/
+
+Inside features/, separate by domain:
+- dashboard
+- wards
+- nurses
+- rules
+- staffing
+- requests
+- scheduler
+- validation
+- export
+
+Create initial seed data for one sample ward and 8-12 sample nurses.
+
+Code quality requirements:
+- Clean TypeScript types
+- Reusable UI components
+- Good naming
+- Server actions or API routes where appropriate
+- Zod validation schemas
+- Prisma models for wards, nurses, rules, staffing requirements, schedule entries, pair rules, validation results
+- Add comments only where logic is not obvious
+
+Deliverables:
+- Fully scaffolded project
+- Working navigation
+- Beautiful UI for all main pages
+- Initial database schema
+- Sample data
+- One basic schedule generation prototype
+- One validation prototype
+- README with local setup instructions

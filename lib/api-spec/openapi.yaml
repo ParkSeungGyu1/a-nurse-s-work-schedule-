@@ -3,20 +3,34 @@ info:
   # Do not change the title, if the title changes, the import paths will be broken
   title: Api
   version: 0.1.0
-  description: API specification
+  description: Nurse scheduling platform API
 servers:
   - url: /api
     description: Base API path
 tags:
   - name: health
     description: Health operations
+  - name: wards
+    description: Ward operations
+  - name: nurses
+    description: Nurse operations
+  - name: rules
+    description: Ward rule operations
+  - name: staffing
+    description: Daily staffing requirements
+  - name: requests
+    description: Nurse personal requests
+  - name: schedules
+    description: Schedule operations
+  - name: dashboard
+    description: Dashboard aggregates
+
 paths:
   /healthz:
     get:
       operationId: healthCheck
       tags: [health]
       summary: Health check
-      description: Returns server health status
       responses:
         "200":
           description: Healthy
@@ -24,6 +38,647 @@ paths:
             application/json:
               schema:
                 $ref: "#/components/schemas/HealthStatus"
+
+  # ── DASHBOARD ────────────────────────────────────────────────────────────────
+  /dashboard/summary:
+    get:
+      operationId: getDashboardSummary
+      tags: [dashboard]
+      summary: Dashboard summary stats
+      responses:
+        "200":
+          description: Summary
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/DashboardSummary"
+
+  # ── WARDS ─────────────────────────────────────────────────────────────────────
+  /wards:
+    get:
+      operationId: listWards
+      tags: [wards]
+      summary: List all wards
+      responses:
+        "200":
+          description: Ward list
+          content:
+            application/json:
+              schema:
+                type: array
+                items:
+                  $ref: "#/components/schemas/Ward"
+    post:
+      operationId: createWard
+      tags: [wards]
+      summary: Create a ward
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/WardInput"
+      responses:
+        "201":
+          description: Created
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Ward"
+
+  /wards/{wardId}:
+    get:
+      operationId: getWard
+      tags: [wards]
+      summary: Get a ward
+      parameters:
+        - name: wardId
+          in: path
+          required: true
+          schema:
+            type: integer
+      responses:
+        "200":
+          description: Ward
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Ward"
+        "404":
+          description: Not found
+    patch:
+      operationId: updateWard
+      tags: [wards]
+      summary: Update a ward
+      parameters:
+        - name: wardId
+          in: path
+          required: true
+          schema:
+            type: integer
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/WardUpdate"
+      responses:
+        "200":
+          description: Updated ward
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Ward"
+    delete:
+      operationId: deleteWard
+      tags: [wards]
+      summary: Delete a ward
+      parameters:
+        - name: wardId
+          in: path
+          required: true
+          schema:
+            type: integer
+      responses:
+        "204":
+          description: Deleted
+
+  # ── NURSES ────────────────────────────────────────────────────────────────────
+  /wards/{wardId}/nurses:
+    get:
+      operationId: listNurses
+      tags: [nurses]
+      summary: List nurses in a ward
+      parameters:
+        - name: wardId
+          in: path
+          required: true
+          schema:
+            type: integer
+      responses:
+        "200":
+          description: Nurse list
+          content:
+            application/json:
+              schema:
+                type: array
+                items:
+                  $ref: "#/components/schemas/Nurse"
+    post:
+      operationId: createNurse
+      tags: [nurses]
+      summary: Create a nurse
+      parameters:
+        - name: wardId
+          in: path
+          required: true
+          schema:
+            type: integer
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/NurseInput"
+      responses:
+        "201":
+          description: Created
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Nurse"
+
+  /wards/{wardId}/nurses/{nurseId}:
+    get:
+      operationId: getNurse
+      tags: [nurses]
+      summary: Get a nurse
+      parameters:
+        - name: wardId
+          in: path
+          required: true
+          schema:
+            type: integer
+        - name: nurseId
+          in: path
+          required: true
+          schema:
+            type: integer
+      responses:
+        "200":
+          description: Nurse
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Nurse"
+        "404":
+          description: Not found
+    patch:
+      operationId: updateNurse
+      tags: [nurses]
+      summary: Update a nurse
+      parameters:
+        - name: wardId
+          in: path
+          required: true
+          schema:
+            type: integer
+        - name: nurseId
+          in: path
+          required: true
+          schema:
+            type: integer
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/NurseUpdate"
+      responses:
+        "200":
+          description: Updated nurse
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Nurse"
+    delete:
+      operationId: deleteNurse
+      tags: [nurses]
+      summary: Delete a nurse
+      parameters:
+        - name: wardId
+          in: path
+          required: true
+          schema:
+            type: integer
+        - name: nurseId
+          in: path
+          required: true
+          schema:
+            type: integer
+      responses:
+        "204":
+          description: Deleted
+
+  # ── RULES ─────────────────────────────────────────────────────────────────────
+  /wards/{wardId}/rules:
+    get:
+      operationId: getWardRules
+      tags: [rules]
+      summary: Get active rule set for a ward
+      parameters:
+        - name: wardId
+          in: path
+          required: true
+          schema:
+            type: integer
+      responses:
+        "200":
+          description: Rules
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/WardRule"
+    put:
+      operationId: upsertWardRules
+      tags: [rules]
+      summary: Upsert ward rules
+      parameters:
+        - name: wardId
+          in: path
+          required: true
+          schema:
+            type: integer
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/WardRuleInput"
+      responses:
+        "200":
+          description: Updated rules
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/WardRule"
+
+  /wards/{wardId}/pair-rules:
+    get:
+      operationId: listPairRules
+      tags: [rules]
+      summary: List pair rules for a ward
+      parameters:
+        - name: wardId
+          in: path
+          required: true
+          schema:
+            type: integer
+      responses:
+        "200":
+          description: Pair rules
+          content:
+            application/json:
+              schema:
+                type: array
+                items:
+                  $ref: "#/components/schemas/PairRule"
+    post:
+      operationId: createPairRule
+      tags: [rules]
+      summary: Create a pair rule
+      parameters:
+        - name: wardId
+          in: path
+          required: true
+          schema:
+            type: integer
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/PairRuleInput"
+      responses:
+        "201":
+          description: Created
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/PairRule"
+
+  /wards/{wardId}/pair-rules/{pairRuleId}:
+    delete:
+      operationId: deletePairRule
+      tags: [rules]
+      summary: Delete a pair rule
+      parameters:
+        - name: wardId
+          in: path
+          required: true
+          schema:
+            type: integer
+        - name: pairRuleId
+          in: path
+          required: true
+          schema:
+            type: integer
+      responses:
+        "204":
+          description: Deleted
+
+  # ── STAFFING ──────────────────────────────────────────────────────────────────
+  /wards/{wardId}/staffing/{yearMonth}:
+    get:
+      operationId: listStaffingRequirements
+      tags: [staffing]
+      summary: List staffing requirements for a ward and month
+      parameters:
+        - name: wardId
+          in: path
+          required: true
+          schema:
+            type: integer
+        - name: yearMonth
+          in: path
+          required: true
+          schema:
+            type: string
+            description: "Format: YYYY-MM"
+      responses:
+        "200":
+          description: Staffing requirements
+          content:
+            application/json:
+              schema:
+                type: array
+                items:
+                  $ref: "#/components/schemas/DailyRequirement"
+
+  /wards/{wardId}/staffing:
+    post:
+      operationId: upsertStaffingRequirements
+      tags: [staffing]
+      summary: Upsert staffing requirements (bulk)
+      parameters:
+        - name: wardId
+          in: path
+          required: true
+          schema:
+            type: integer
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/StaffingBulkInput"
+      responses:
+        "200":
+          description: Upserted
+          content:
+            application/json:
+              schema:
+                type: array
+                items:
+                  $ref: "#/components/schemas/DailyRequirement"
+
+  # ── NURSE CONSTRAINTS ────────────────────────────────────────────────────────
+  /wards/{wardId}/nurses/{nurseId}/constraints:
+    get:
+      operationId: listNurseConstraints
+      tags: [nurses]
+      summary: List constraints for a nurse
+      parameters:
+        - name: wardId
+          in: path
+          required: true
+          schema:
+            type: integer
+        - name: nurseId
+          in: path
+          required: true
+          schema:
+            type: integer
+      responses:
+        "200":
+          description: Constraints
+          content:
+            application/json:
+              schema:
+                type: array
+                items:
+                  $ref: "#/components/schemas/NurseConstraint"
+    post:
+      operationId: createNurseConstraint
+      tags: [nurses]
+      summary: Create a nurse constraint
+      parameters:
+        - name: wardId
+          in: path
+          required: true
+          schema:
+            type: integer
+        - name: nurseId
+          in: path
+          required: true
+          schema:
+            type: integer
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/NurseConstraintInput"
+      responses:
+        "201":
+          description: Created
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/NurseConstraint"
+
+  /wards/{wardId}/nurses/{nurseId}/constraints/{constraintId}:
+    delete:
+      operationId: deleteNurseConstraint
+      tags: [nurses]
+      summary: Delete a nurse constraint
+      parameters:
+        - name: wardId
+          in: path
+          required: true
+          schema:
+            type: integer
+        - name: nurseId
+          in: path
+          required: true
+          schema:
+            type: integer
+        - name: constraintId
+          in: path
+          required: true
+          schema:
+            type: integer
+      responses:
+        "204":
+          description: Deleted
+
+  # ── SCHEDULES ─────────────────────────────────────────────────────────────────
+  /wards/{wardId}/schedules:
+    get:
+      operationId: listSchedules
+      tags: [schedules]
+      summary: List schedules for a ward
+      parameters:
+        - name: wardId
+          in: path
+          required: true
+          schema:
+            type: integer
+      responses:
+        "200":
+          description: Schedule list
+          content:
+            application/json:
+              schema:
+                type: array
+                items:
+                  $ref: "#/components/schemas/Schedule"
+    post:
+      operationId: createSchedule
+      tags: [schedules]
+      summary: Create a new schedule (or trigger auto-generate)
+      parameters:
+        - name: wardId
+          in: path
+          required: true
+          schema:
+            type: integer
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/ScheduleInput"
+      responses:
+        "201":
+          description: Created
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Schedule"
+
+  /wards/{wardId}/schedules/{scheduleId}:
+    get:
+      operationId: getSchedule
+      tags: [schedules]
+      summary: Get a schedule with all entries
+      parameters:
+        - name: wardId
+          in: path
+          required: true
+          schema:
+            type: integer
+        - name: scheduleId
+          in: path
+          required: true
+          schema:
+            type: integer
+      responses:
+        "200":
+          description: Schedule with entries
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ScheduleDetail"
+        "404":
+          description: Not found
+    delete:
+      operationId: deleteSchedule
+      tags: [schedules]
+      summary: Delete a schedule
+      parameters:
+        - name: wardId
+          in: path
+          required: true
+          schema:
+            type: integer
+        - name: scheduleId
+          in: path
+          required: true
+          schema:
+            type: integer
+      responses:
+        "204":
+          description: Deleted
+
+  /wards/{wardId}/schedules/{scheduleId}/entries:
+    patch:
+      operationId: updateScheduleEntries
+      tags: [schedules]
+      summary: Bulk update schedule entries (manual edits)
+      parameters:
+        - name: wardId
+          in: path
+          required: true
+          schema:
+            type: integer
+        - name: scheduleId
+          in: path
+          required: true
+          schema:
+            type: integer
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/ScheduleEntriesPatch"
+      responses:
+        "200":
+          description: Updated entries
+          content:
+            application/json:
+              schema:
+                type: array
+                items:
+                  $ref: "#/components/schemas/ScheduleEntry"
+
+  /wards/{wardId}/schedules/{scheduleId}/generate:
+    post:
+      operationId: generateSchedule
+      tags: [schedules]
+      summary: Auto-generate schedule entries
+      parameters:
+        - name: wardId
+          in: path
+          required: true
+          schema:
+            type: integer
+        - name: scheduleId
+          in: path
+          required: true
+          schema:
+            type: integer
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/GenerateScheduleInput"
+      responses:
+        "200":
+          description: Generated schedule with validation results
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ScheduleDetail"
+
+  /wards/{wardId}/schedules/{scheduleId}/validate:
+    post:
+      operationId: validateSchedule
+      tags: [schedules]
+      summary: Validate a schedule and return issues
+      parameters:
+        - name: wardId
+          in: path
+          required: true
+          schema:
+            type: integer
+        - name: scheduleId
+          in: path
+          required: true
+          schema:
+            type: integer
+      responses:
+        "200":
+          description: Validation results
+          content:
+            application/json:
+              schema:
+                type: array
+                items:
+                  $ref: "#/components/schemas/ValidationResult"
+
 components:
   schemas:
     HealthStatus:
@@ -34,3 +689,477 @@ components:
       required:
         - status
 
+    # ── DASHBOARD ────────────────────────────────────────────────────────────────
+    DashboardSummary:
+      type: object
+      required: [wardCount, nurseCount, activeSchedules, unresolvedConflicts, recentSchedules]
+      properties:
+        wardCount:
+          type: integer
+        nurseCount:
+          type: integer
+        activeSchedules:
+          type: integer
+        unresolvedConflicts:
+          type: integer
+        recentSchedules:
+          type: array
+          items:
+            $ref: "#/components/schemas/Schedule"
+
+    # ── WARD ──────────────────────────────────────────────────────────────────────
+    Ward:
+      type: object
+      required: [id, name, wardType, createdAt]
+      properties:
+        id:
+          type: integer
+        name:
+          type: string
+        wardType:
+          type: string
+        shiftDStart:
+          type: ["string", "null"]
+        shiftDEnd:
+          type: ["string", "null"]
+        shiftEStart:
+          type: ["string", "null"]
+        shiftEEnd:
+          type: ["string", "null"]
+        shiftNStart:
+          type: ["string", "null"]
+        shiftNEnd:
+          type: ["string", "null"]
+        maxNurseCount:
+          type: ["integer", "null"]
+        nurseCount:
+          type: ["integer", "null"]
+        createdAt:
+          type: string
+
+    WardInput:
+      type: object
+      required: [name, wardType]
+      properties:
+        name:
+          type: string
+        wardType:
+          type: string
+        shiftDStart:
+          type: string
+        shiftDEnd:
+          type: string
+        shiftEStart:
+          type: string
+        shiftEEnd:
+          type: string
+        shiftNStart:
+          type: string
+        shiftNEnd:
+          type: string
+        maxNurseCount:
+          type: integer
+
+    WardUpdate:
+      type: object
+      properties:
+        name:
+          type: string
+        wardType:
+          type: string
+        shiftDStart:
+          type: string
+        shiftDEnd:
+          type: string
+        shiftEStart:
+          type: string
+        shiftEEnd:
+          type: string
+        shiftNStart:
+          type: string
+        shiftNEnd:
+          type: string
+        maxNurseCount:
+          type: integer
+
+    # ── NURSE ─────────────────────────────────────────────────────────────────────
+    Nurse:
+      type: object
+      required: [id, wardId, name, employeeNumber, experienceLevel, createdAt]
+      properties:
+        id:
+          type: integer
+        wardId:
+          type: integer
+        name:
+          type: string
+        employeeNumber:
+          type: string
+        experienceLevel:
+          type: string
+          description: "new | experienced | senior"
+        isNightKeep:
+          type: boolean
+        isPregnant:
+          type: boolean
+        allowedShifts:
+          type: array
+          items:
+            type: string
+        monthlyNightLimit:
+          type: ["integer", "null"]
+        preceptorId:
+          type: ["integer", "null"]
+        notes:
+          type: ["string", "null"]
+        createdAt:
+          type: string
+
+    NurseInput:
+      type: object
+      required: [name, employeeNumber, experienceLevel]
+      properties:
+        name:
+          type: string
+        employeeNumber:
+          type: string
+        experienceLevel:
+          type: string
+        isNightKeep:
+          type: boolean
+        isPregnant:
+          type: boolean
+        allowedShifts:
+          type: array
+          items:
+            type: string
+        monthlyNightLimit:
+          type: integer
+        preceptorId:
+          type: integer
+        notes:
+          type: string
+
+    NurseUpdate:
+      type: object
+      properties:
+        name:
+          type: string
+        employeeNumber:
+          type: string
+        experienceLevel:
+          type: string
+        isNightKeep:
+          type: boolean
+        isPregnant:
+          type: boolean
+        allowedShifts:
+          type: array
+          items:
+            type: string
+        monthlyNightLimit:
+          type: integer
+        preceptorId:
+          type: integer
+        notes:
+          type: string
+
+    # ── NURSE CONSTRAINT ─────────────────────────────────────────────────────────
+    NurseConstraint:
+      type: object
+      required: [id, nurseId, constraintType, createdAt]
+      properties:
+        id:
+          type: integer
+        nurseId:
+          type: integer
+        constraintType:
+          type: string
+          description: "fixed_off | preferred_off | forbidden_shift | education | annual_leave"
+        date:
+          type: ["string", "null"]
+        shiftType:
+          type: ["string", "null"]
+        yearMonth:
+          type: ["string", "null"]
+        isHard:
+          type: boolean
+        notes:
+          type: ["string", "null"]
+        createdAt:
+          type: string
+
+    NurseConstraintInput:
+      type: object
+      required: [constraintType]
+      properties:
+        constraintType:
+          type: string
+        date:
+          type: string
+        shiftType:
+          type: string
+        yearMonth:
+          type: string
+        isHard:
+          type: boolean
+        notes:
+          type: string
+
+    # ── WARD RULES ────────────────────────────────────────────────────────────────
+    WardRule:
+      type: object
+      required: [id, wardId]
+      properties:
+        id:
+          type: integer
+        wardId:
+          type: integer
+        maxConsecutiveWorkDays:
+          type: integer
+        offDaysAfterConsecutiveWork:
+          type: integer
+        maxConsecutiveNightShifts:
+          type: integer
+        offDaysAfterNightShifts:
+          type: integer
+        allowEToD:
+          type: boolean
+        monthlyMaxNightShifts:
+          type: integer
+        minExperiencedPerShift:
+          type: integer
+        maxNewNurseRatioPerShift:
+          type: number
+        weekendFairness:
+          type: boolean
+        holidayFairness:
+          type: boolean
+        updatedAt:
+          type: string
+
+    WardRuleInput:
+      type: object
+      properties:
+        maxConsecutiveWorkDays:
+          type: integer
+        offDaysAfterConsecutiveWork:
+          type: integer
+        maxConsecutiveNightShifts:
+          type: integer
+        offDaysAfterNightShifts:
+          type: integer
+        allowEToD:
+          type: boolean
+        monthlyMaxNightShifts:
+          type: integer
+        minExperiencedPerShift:
+          type: integer
+        maxNewNurseRatioPerShift:
+          type: number
+        weekendFairness:
+          type: boolean
+        holidayFairness:
+          type: boolean
+
+    # ── PAIR RULE ─────────────────────────────────────────────────────────────────
+    PairRule:
+      type: object
+      required: [id, wardId, preceptorId, precepteeId, ruleType]
+      properties:
+        id:
+          type: integer
+        wardId:
+          type: integer
+        preceptorId:
+          type: integer
+        precepteeId:
+          type: integer
+        ruleType:
+          type: string
+          description: "same_shift | different_shift"
+        isActive:
+          type: boolean
+
+    PairRuleInput:
+      type: object
+      required: [preceptorId, precepteeId, ruleType]
+      properties:
+        preceptorId:
+          type: integer
+        precepteeId:
+          type: integer
+        ruleType:
+          type: string
+        isActive:
+          type: boolean
+
+    # ── STAFFING ─────────────────────────────────────────────────────────────────
+    DailyRequirement:
+      type: object
+      required: [id, wardId, date, shiftType, requiredCount]
+      properties:
+        id:
+          type: integer
+        wardId:
+          type: integer
+        date:
+          type: string
+        shiftType:
+          type: string
+          description: "D | E | N"
+        requiredCount:
+          type: integer
+        isHoliday:
+          type: boolean
+
+    StaffingBulkInput:
+      type: object
+      required: [requirements]
+      properties:
+        requirements:
+          type: array
+          items:
+            type: object
+            required: [date, shiftType, requiredCount]
+            properties:
+              date:
+                type: string
+              shiftType:
+                type: string
+              requiredCount:
+                type: integer
+              isHoliday:
+                type: boolean
+
+    # ── SCHEDULE ─────────────────────────────────────────────────────────────────
+    Schedule:
+      type: object
+      required: [id, wardId, yearMonth, status, createdAt]
+      properties:
+        id:
+          type: integer
+        wardId:
+          type: integer
+        wardName:
+          type: ["string", "null"]
+        yearMonth:
+          type: string
+        status:
+          type: string
+          description: "draft | published | archived"
+        conflictCount:
+          type: ["integer", "null"]
+        createdAt:
+          type: string
+        updatedAt:
+          type: string
+
+    ScheduleInput:
+      type: object
+      required: [yearMonth]
+      properties:
+        yearMonth:
+          type: string
+        autoGenerate:
+          type: boolean
+
+    ScheduleDetail:
+      type: object
+      required: [id, wardId, yearMonth, status, entries, validationResults, createdAt]
+      properties:
+        id:
+          type: integer
+        wardId:
+          type: integer
+        yearMonth:
+          type: string
+        status:
+          type: string
+        entries:
+          type: array
+          items:
+            $ref: "#/components/schemas/ScheduleEntry"
+        validationResults:
+          type: array
+          items:
+            $ref: "#/components/schemas/ValidationResult"
+        conflictCount:
+          type: integer
+        createdAt:
+          type: string
+        updatedAt:
+          type: string
+
+    ScheduleEntry:
+      type: object
+      required: [id, scheduleId, nurseId, date, shiftType]
+      properties:
+        id:
+          type: integer
+        scheduleId:
+          type: integer
+        nurseId:
+          type: integer
+        nurseName:
+          type: ["string", "null"]
+        nurseExperienceLevel:
+          type: ["string", "null"]
+        date:
+          type: string
+        shiftType:
+          type: string
+          description: "D | E | N | OFF"
+        isManualEdit:
+          type: boolean
+
+    ScheduleEntriesPatch:
+      type: object
+      required: [entries]
+      properties:
+        entries:
+          type: array
+          items:
+            type: object
+            required: [nurseId, date, shiftType]
+            properties:
+              nurseId:
+                type: integer
+              date:
+                type: string
+              shiftType:
+                type: string
+
+    GenerateScheduleInput:
+      type: object
+      properties:
+        priorityMode:
+          type: string
+          description: "balanced | fairness | coverage"
+        overwriteManualEdits:
+          type: boolean
+
+    # ── VALIDATION ────────────────────────────────────────────────────────────────
+    ValidationResult:
+      type: object
+      required: [id, scheduleId, severity, ruleCode, message]
+      properties:
+        id:
+          type: integer
+        scheduleId:
+          type: integer
+        severity:
+          type: string
+          description: "critical | warning | info"
+        ruleCode:
+          type: string
+        message:
+          type: string
+        date:
+          type: ["string", "null"]
+        nurseId:
+          type: ["integer", "null"]
+        nurseName:
+          type: ["string", "null"]
+        shiftType:
+          type: ["string", "null"]

@@ -1,4 +1,10 @@
-import type { ScheduleEntry, Nurse, WardRule, DailyRequirement } from "@workspace/db";
+import type {
+  DailyRequirement,
+  Nurse,
+  PairRule,
+  ScheduleEntry,
+  WardRule,
+} from "@workspace/db";
 
 export interface ValidationIssue {
   severity: "critical" | "warning" | "info";
@@ -9,34 +15,38 @@ export interface ValidationIssue {
   shiftType?: string;
 }
 
+function addDays(date: string, days: number): string {
+  const next = new Date(date);
+  next.setDate(next.getDate() + days);
+  return next.toISOString().slice(0, 10);
+}
+
 export function validateSchedule(
   entries: ScheduleEntry[],
   nurses: Nurse[],
   rules: WardRule,
-  requirements: DailyRequirement[]
+  requirements: DailyRequirement[],
+  pairRules: PairRule[] = []
 ): ValidationIssue[] {
   const issues: ValidationIssue[] = [];
-  const nurseMap = new Map(nurses.map((n) => [n.id, n]));
+  const nurseMap = new Map(nurses.map((nurse) => [nurse.id, nurse]));
 
-  // Group entries by nurse
   const byNurse = new Map<number, ScheduleEntry[]>();
-  for (const e of entries) {
-    if (!byNurse.has(e.nurseId)) byNurse.set(e.nurseId, []);
-    byNurse.get(e.nurseId)!.push(e);
+  const entriesByNurseDate = new Map<number, Map<string, ScheduleEntry>>();
+
+  for (const entry of entries) {
+    if (!byNurse.has(entry.nurseId)) byNurse.set(entry.nurseId, []);
+    byNurse.get(entry.nurseId)!.push(entry);
+
+    if (!entriesByNurseDate.has(entry.nurseId)) {
+      entriesByNurseDate.set(entry.nurseId, new Map());
+    }
+    entriesByNurseDate.get(entry.nurseId)!.set(entry.date, entry);
   }
 
-  // Group entries by date + shiftType
-  const byDateShift = new Map<string, ScheduleEntry[]>();
-  for (const e of entries) {
-    const key = `${e.date}:${e.shiftType}`;
-    if (!byDateShift.has(key)) byDateShift.set(key, []);
-    byDateShift.get(key)!.push(e);
-  }
-
-  // Requirements map
   const reqMap = new Map<string, DailyRequirement>();
-  for (const r of requirements) {
-    reqMap.set(`${r.date}:${r.shiftType}`, r);
+  for (const requirement of requirements) {
+    reqMap.set(`${requirement.date}:${requirement.shiftType}`, requirement);
   }
 
   for (const [nurseId, nurseEntries] of byNurse) {
@@ -44,114 +54,144 @@ export function validateSchedule(
     if (!nurse) continue;
 
     const sorted = [...nurseEntries].sort((a, b) => a.date.localeCompare(b.date));
-    const workShifts = sorted.filter((e) => e.shiftType !== "OFF");
+    const byDate = entriesByNurseDate.get(nurseId)!;
+    const workShifts = sorted.filter((entry) => entry.shiftType !== "OFF");
 
-    // Check max consecutive work days
-    let consecutive = 0;
-    let prevDate = "";
-    for (const e of sorted) {
-      if (e.shiftType === "OFF") {
-        consecutive = 0;
-        prevDate = "";
-        continue;
-      }
-      const curr = new Date(e.date);
-      if (prevDate) {
-        const prev = new Date(prevDate);
-        const diff = (curr.getTime() - prev.getTime()) / 86400000;
-        if (diff === 1) {
-          consecutive++;
-        } else {
-          consecutive = 1;
+    let consecutiveWork = 0;
+    let consecutiveNight = 0;
+    let previousWorkDate = "";
+
+    function checkRecoveryDays(
+      lastWorkedDate: string,
+      requiredOffDays: number,
+      ruleCode: string,
+      message: string
+    ) {
+      if (requiredOffDays <= 0) return;
+
+      for (let offset = 1; offset <= requiredOffDays; offset++) {
+        const targetDate = addDays(lastWorkedDate, offset);
+        const nextEntry = byDate.get(targetDate);
+        if (!nextEntry) break;
+
+        if (nextEntry.shiftType !== "OFF") {
+          issues.push({
+            severity: "critical",
+            ruleCode,
+            message,
+            date: targetDate,
+            nurseId,
+          });
+          break;
         }
-      } else {
-        consecutive = 1;
-      }
-      prevDate = e.date;
-      if (consecutive > rules.maxConsecutiveWorkDays) {
-        issues.push({
-          severity: "critical",
-          ruleCode: "MAX_CONSECUTIVE_WORK",
-          message: `${nurse.name}: 연속 근무 ${consecutive}일 초과 (최대 ${rules.maxConsecutiveWorkDays}일)`,
-          date: e.date,
-          nurseId,
-        });
       }
     }
 
-    // Check consecutive night shifts and off-after-night
-    let consecutiveN = 0;
-    for (let i = 0; i < sorted.length; i++) {
-      const e = sorted[i];
-      if (e.shiftType === "N") {
-        consecutiveN++;
-        if (consecutiveN > rules.maxConsecutiveNightShifts) {
+    for (let index = 0; index < sorted.length; index++) {
+      const entry = sorted[index];
+
+      if (entry.shiftType === "OFF") {
+        if (consecutiveWork >= rules.maxConsecutiveWorkDays && previousWorkDate) {
+          checkRecoveryDays(
+            previousWorkDate,
+            rules.offDaysAfterConsecutiveWork,
+            "OFF_AFTER_CONSECUTIVE_WORK",
+            `${nurse.name}: 연속 근무 후 휴무 부족 (연속 근무 후 ${rules.offDaysAfterConsecutiveWork}일 필요)`
+          );
+        }
+
+        if (consecutiveNight > 0 && previousWorkDate) {
+          checkRecoveryDays(
+            previousWorkDate,
+            rules.offDaysAfterNightShifts,
+            "OFF_AFTER_NIGHT",
+            `${nurse.name}: 야간 근무 후 휴무 부족 (야간 후 ${rules.offDaysAfterNightShifts}일 필요)`
+          );
+        }
+
+        consecutiveWork = 0;
+        consecutiveNight = 0;
+        previousWorkDate = "";
+        continue;
+      }
+
+      const currentDate = new Date(entry.date);
+      if (previousWorkDate) {
+        const previousDate = new Date(previousWorkDate);
+        const dayDiff = (currentDate.getTime() - previousDate.getTime()) / 86400000;
+        consecutiveWork = dayDiff === 1 ? consecutiveWork + 1 : 1;
+      } else {
+        consecutiveWork = 1;
+      }
+
+      if (consecutiveWork > rules.maxConsecutiveWorkDays) {
+        issues.push({
+          severity: "critical",
+          ruleCode: "MAX_CONSECUTIVE_WORK",
+          message: `${nurse.name}: 연속 근무 ${consecutiveWork}일 초과 (최대 ${rules.maxConsecutiveWorkDays}일)`,
+          date: entry.date,
+          nurseId,
+        });
+      }
+
+      if (entry.shiftType === "N") {
+        consecutiveNight += 1;
+        if (consecutiveNight > rules.maxConsecutiveNightShifts) {
           issues.push({
             severity: "critical",
             ruleCode: "MAX_CONSECUTIVE_NIGHT",
-            message: `${nurse.name}: 연속 야간 ${consecutiveN}일 초과 (최대 ${rules.maxConsecutiveNightShifts}일)`,
-            date: e.date,
+            message: `${nurse.name}: 연속 야간 ${consecutiveNight}일 초과 (최대 ${rules.maxConsecutiveNightShifts}일)`,
+            date: entry.date,
             nurseId,
             shiftType: "N",
           });
         }
-        // Check off-after-night
-        for (let j = 1; j <= rules.offDaysAfterNightShifts; j++) {
-          const nextEntry = sorted.find((s) => {
-            const d = new Date(e.date);
-            d.setDate(d.getDate() + j);
-            return s.date === d.toISOString().slice(0, 10);
-          });
-          if (nextEntry && nextEntry.shiftType !== "OFF" && i === sorted.indexOf(sorted.find((s) => s.shiftType === "N" && sorted.indexOf(s) > sorted.indexOf(e) - consecutiveN) ?? e)) {
-            // simplified check
-          }
-        }
-      } else {
-        // Check off-after-nights when N streak ends
-        if (consecutiveN >= rules.maxConsecutiveNightShifts) {
-          // After N streak, need offDaysAfterNightShifts OFF
-          for (let j = 1; j <= rules.offDaysAfterNightShifts; j++) {
-            const checkDate = new Date(sorted[i - 1].date);
-            checkDate.setDate(checkDate.getDate() + j);
-            const checkDateStr = checkDate.toISOString().slice(0, 10);
-            const checkEntry = sorted.find((s) => s.date === checkDateStr);
-            if (checkEntry && checkEntry.shiftType !== "OFF") {
-              issues.push({
-                severity: "critical",
-                ruleCode: "OFF_AFTER_NIGHT",
-                message: `${nurse.name}: 야간 근무 후 휴무 부족 (야간 후 ${rules.offDaysAfterNightShifts}일 필요)`,
-                date: checkDateStr,
-                nurseId,
-              });
-              break;
-            }
-          }
-        }
-        consecutiveN = 0;
+      } else if (consecutiveNight > 0) {
+        checkRecoveryDays(
+          previousWorkDate,
+          rules.offDaysAfterNightShifts,
+          "OFF_AFTER_NIGHT",
+          `${nurse.name}: 야간 근무 후 휴무 부족 (야간 후 ${rules.offDaysAfterNightShifts}일 필요)`
+        );
+        consecutiveNight = 0;
       }
 
-      // Check E -> D restriction
-      if (!rules.allowEToD && e.shiftType === "D" && i > 0) {
-        const prev = sorted[i - 1];
-        if (prev.shiftType === "E") {
-          const prevDate2 = new Date(prev.date);
-          prevDate2.setDate(prevDate2.getDate() + 1);
-          if (prevDate2.toISOString().slice(0, 10) === e.date) {
-            issues.push({
-              severity: "critical",
-              ruleCode: "E_TO_D",
-              message: `${nurse.name}: 이브닝 다음 날 데이 배정 금지`,
-              date: e.date,
-              nurseId,
-              shiftType: "D",
-            });
-          }
+      if (!rules.allowEToD && entry.shiftType === "D" && index > 0) {
+        const previousEntry = sorted[index - 1];
+        if (previousEntry.shiftType === "E" && addDays(previousEntry.date, 1) === entry.date) {
+          issues.push({
+            severity: "critical",
+            ruleCode: "E_TO_D",
+            message: `${nurse.name}: 이브닝 다음 날 데이 배정 금지`,
+            date: entry.date,
+            nurseId,
+            shiftType: "D",
+          });
         }
       }
+
+      previousWorkDate = entry.date;
     }
 
-    // Check monthly night count
-    const nightCount = workShifts.filter((e) => e.shiftType === "N").length;
+    if (consecutiveWork >= rules.maxConsecutiveWorkDays && previousWorkDate) {
+      checkRecoveryDays(
+        previousWorkDate,
+        rules.offDaysAfterConsecutiveWork,
+        "OFF_AFTER_CONSECUTIVE_WORK",
+        `${nurse.name}: 연속 근무 후 휴무 부족 (연속 근무 후 ${rules.offDaysAfterConsecutiveWork}일 필요)`
+      );
+    }
+
+    if (consecutiveNight > 0 && previousWorkDate) {
+      checkRecoveryDays(
+        previousWorkDate,
+        rules.offDaysAfterNightShifts,
+        "OFF_AFTER_NIGHT",
+        `${nurse.name}: 야간 근무 후 휴무 부족 (야간 후 ${rules.offDaysAfterNightShifts}일 필요)`
+      );
+    }
+
+    const nightCount = workShifts.filter((entry) => entry.shiftType === "N").length;
     const nightLimit = nurse.monthlyNightLimit ?? rules.monthlyMaxNightShifts;
     if (nightCount > nightLimit) {
       issues.push({
@@ -163,46 +203,45 @@ export function validateSchedule(
       });
     }
 
-    // Check forbidden shifts
-    for (const e of workShifts) {
-      if (!nurse.allowedShifts.includes(e.shiftType)) {
+    for (const entry of workShifts) {
+      if (!nurse.allowedShifts.includes(entry.shiftType)) {
         issues.push({
           severity: "critical",
           ruleCode: "FORBIDDEN_SHIFT",
-          message: `${nurse.name}: 허용되지 않은 근무 유형 (${e.shiftType})`,
-          date: e.date,
+          message: `${nurse.name}: 허용되지 않은 근무 유형 (${entry.shiftType})`,
+          date: entry.date,
           nurseId,
-          shiftType: e.shiftType,
+          shiftType: entry.shiftType,
         });
       }
     }
   }
 
-  // Check staffing requirements per shift
-  const allDates = [...new Set(entries.map((e) => e.date))].sort();
+  const allDates = [...new Set(entries.map((entry) => entry.date))].sort();
   for (const date of allDates) {
     for (const shiftType of ["D", "E", "N"]) {
-      const req = reqMap.get(`${date}:${shiftType}`);
-      if (!req) continue;
+      const requirement = reqMap.get(`${date}:${shiftType}`);
+      if (!requirement) continue;
 
       const assigned = entries.filter(
-        (e) => e.date === date && e.shiftType === shiftType
+        (entry) => entry.date === date && entry.shiftType === shiftType
       );
-      if (assigned.length < req.requiredCount) {
+
+      if (assigned.length < requirement.requiredCount) {
         issues.push({
           severity: "critical",
           ruleCode: "UNDERSTAFFED",
-          message: `${date} ${shiftType}조: 인원 부족 (${assigned.length}/${req.requiredCount}명)`,
+          message: `${date} ${shiftType}조: 인원 부족 (${assigned.length}/${requirement.requiredCount}명)`,
           date,
           shiftType,
         });
       }
 
-      // Check new nurse ratio
-      const newNurses = assigned.filter((e) => {
-        const nurse = nurseMap.get(e.nurseId);
+      const newNurses = assigned.filter((entry) => {
+        const nurse = nurseMap.get(entry.nurseId);
         return nurse?.experienceLevel === "new";
       });
+
       if (assigned.length > 0) {
         const ratio = newNurses.length / assigned.length;
         if (ratio > rules.maxNewNurseRatioPerShift) {
@@ -216,11 +255,11 @@ export function validateSchedule(
         }
       }
 
-      // Check experienced minimum
-      const experienced = assigned.filter((e) => {
-        const nurse = nurseMap.get(e.nurseId);
+      const experienced = assigned.filter((entry) => {
+        const nurse = nurseMap.get(entry.nurseId);
         return nurse?.experienceLevel !== "new";
       });
+
       if (experienced.length < rules.minExperiencedPerShift && assigned.length > 0) {
         issues.push({
           severity: "warning",
@@ -228,6 +267,46 @@ export function validateSchedule(
           message: `${date} ${shiftType}조: 경력 간호사 부족 (${experienced.length}/${rules.minExperiencedPerShift}명 필요)`,
           date,
           shiftType,
+        });
+      }
+    }
+  }
+
+  for (const pairRule of pairRules) {
+    if (!pairRule.isActive) continue;
+
+    const preceptorEntries = entriesByNurseDate.get(pairRule.preceptorId);
+    const precepteeEntries = entriesByNurseDate.get(pairRule.precepteeId);
+    if (!preceptorEntries || !precepteeEntries) continue;
+
+    for (const date of allDates) {
+      const preceptorShift = preceptorEntries.get(date)?.shiftType;
+      const precepteeShift = precepteeEntries.get(date)?.shiftType;
+      if (!preceptorShift || !precepteeShift) continue;
+
+      if (pairRule.ruleType === "same_shift" && preceptorShift !== precepteeShift) {
+        const preceptorName = nurseMap.get(pairRule.preceptorId)?.name ?? `#${pairRule.preceptorId}`;
+        const precepteeName = nurseMap.get(pairRule.precepteeId)?.name ?? `#${pairRule.precepteeId}`;
+        issues.push({
+          severity: "warning",
+          ruleCode: "PAIR_RULE_SAME_SHIFT",
+          message: `${date}: ${preceptorName} / ${precepteeName} 프리셉터 매칭이 같은 근무로 배정되지 않았습니다.`,
+          date,
+        });
+      }
+
+      if (
+        pairRule.ruleType === "different_shift" &&
+        preceptorShift === precepteeShift &&
+        preceptorShift !== "OFF"
+      ) {
+        const preceptorName = nurseMap.get(pairRule.preceptorId)?.name ?? `#${pairRule.preceptorId}`;
+        const precepteeName = nurseMap.get(pairRule.precepteeId)?.name ?? `#${pairRule.precepteeId}`;
+        issues.push({
+          severity: "warning",
+          ruleCode: "PAIR_RULE_DIFFERENT_SHIFT",
+          message: `${date}: ${preceptorName} / ${precepteeName} 프리셉터 매칭이 다른 근무로 배정되지 않았습니다.`,
+          date,
         });
       }
     }

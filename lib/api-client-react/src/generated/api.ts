@@ -28,11 +28,14 @@ import type {
   NurseUpdate,
   PairRule,
   PairRuleInput,
+  PartialRegenerateInput,
+  RepairScheduleInput,
   Schedule,
   ScheduleDetail,
   ScheduleEntriesPatch,
   ScheduleEntry,
   ScheduleInput,
+  ScheduleRecommendationSummary,
   StaffingBulkInput,
   ValidationResult,
   Ward,
@@ -2511,6 +2514,209 @@ export const useGenerateSchedule = <
 };
 
 /**
+ * @summary Regenerate only selected dates in a schedule
+ */
+export const getRegeneratePartialScheduleUrl = (
+  wardId: number,
+  scheduleId: number,
+) => {
+  return `/api/wards/${wardId}/schedules/${scheduleId}/regenerate-partial`;
+};
+
+export const regeneratePartialSchedule = async (
+  wardId: number,
+  scheduleId: number,
+  partialRegenerateInput: PartialRegenerateInput,
+  options?: RequestInit,
+): Promise<ScheduleDetail> => {
+  return customFetch<ScheduleDetail>(
+    getRegeneratePartialScheduleUrl(wardId, scheduleId),
+    {
+      ...options,
+      method: "POST",
+      headers: { "Content-Type": "application/json", ...options?.headers },
+      body: JSON.stringify(partialRegenerateInput),
+    },
+  );
+};
+
+export const getRegeneratePartialScheduleMutationOptions = <
+  TError = ErrorType<unknown>,
+  TContext = unknown,
+>(options?: {
+  mutation?: UseMutationOptions<
+    Awaited<ReturnType<typeof regeneratePartialSchedule>>,
+    TError,
+    {
+      wardId: number;
+      scheduleId: number;
+      data: BodyType<PartialRegenerateInput>;
+    },
+    TContext
+  >;
+  request?: SecondParameter<typeof customFetch>;
+}): UseMutationOptions<
+  Awaited<ReturnType<typeof regeneratePartialSchedule>>,
+  TError,
+  {
+    wardId: number;
+    scheduleId: number;
+    data: BodyType<PartialRegenerateInput>;
+  },
+  TContext
+> => {
+  const mutationKey = ["regeneratePartialSchedule"];
+  const { mutation: mutationOptions, request: requestOptions } = options
+    ? options.mutation &&
+      "mutationKey" in options.mutation &&
+      options.mutation.mutationKey
+      ? options
+      : { ...options, mutation: { ...options.mutation, mutationKey } }
+    : { mutation: { mutationKey }, request: undefined };
+
+  const mutationFn: MutationFunction<
+    Awaited<ReturnType<typeof regeneratePartialSchedule>>,
+    {
+      wardId: number;
+      scheduleId: number;
+      data: BodyType<PartialRegenerateInput>;
+    }
+  > = (props) => {
+    const { wardId, scheduleId, data } = props ?? {};
+
+    return regeneratePartialSchedule(wardId, scheduleId, data, requestOptions);
+  };
+
+  return { mutationFn, ...mutationOptions };
+};
+
+export type RegeneratePartialScheduleMutationResult = NonNullable<
+  Awaited<ReturnType<typeof regeneratePartialSchedule>>
+>;
+export type RegeneratePartialScheduleMutationBody =
+  BodyType<PartialRegenerateInput>;
+export type RegeneratePartialScheduleMutationError = ErrorType<unknown>;
+
+/**
+ * @summary Regenerate only selected dates in a schedule
+ */
+export const useRegeneratePartialSchedule = <
+  TError = ErrorType<unknown>,
+  TContext = unknown,
+>(options?: {
+  mutation?: UseMutationOptions<
+    Awaited<ReturnType<typeof regeneratePartialSchedule>>,
+    TError,
+    {
+      wardId: number;
+      scheduleId: number;
+      data: BodyType<PartialRegenerateInput>;
+    },
+    TContext
+  >;
+  request?: SecondParameter<typeof customFetch>;
+}): UseMutationResult<
+  Awaited<ReturnType<typeof regeneratePartialSchedule>>,
+  TError,
+  {
+    wardId: number;
+    scheduleId: number;
+    data: BodyType<PartialRegenerateInput>;
+  },
+  TContext
+> => {
+  return useMutation(getRegeneratePartialScheduleMutationOptions(options));
+};
+
+/**
+ * @summary Repair critical conflicts in a schedule
+ */
+export const getRepairScheduleUrl = (wardId: number, scheduleId: number) => {
+  return `/api/wards/${wardId}/schedules/${scheduleId}/repair`;
+};
+
+export const repairSchedule = async (
+  wardId: number,
+  scheduleId: number,
+  repairScheduleInput?: RepairScheduleInput,
+  options?: RequestInit,
+): Promise<ScheduleDetail> => {
+  return customFetch<ScheduleDetail>(getRepairScheduleUrl(wardId, scheduleId), {
+    ...options,
+    method: "POST",
+    headers: { "Content-Type": "application/json", ...options?.headers },
+    body: JSON.stringify(repairScheduleInput),
+  });
+};
+
+export const getRepairScheduleMutationOptions = <
+  TError = ErrorType<unknown>,
+  TContext = unknown,
+>(options?: {
+  mutation?: UseMutationOptions<
+    Awaited<ReturnType<typeof repairSchedule>>,
+    TError,
+    { wardId: number; scheduleId: number; data: BodyType<RepairScheduleInput> },
+    TContext
+  >;
+  request?: SecondParameter<typeof customFetch>;
+}): UseMutationOptions<
+  Awaited<ReturnType<typeof repairSchedule>>,
+  TError,
+  { wardId: number; scheduleId: number; data: BodyType<RepairScheduleInput> },
+  TContext
+> => {
+  const mutationKey = ["repairSchedule"];
+  const { mutation: mutationOptions, request: requestOptions } = options
+    ? options.mutation &&
+      "mutationKey" in options.mutation &&
+      options.mutation.mutationKey
+      ? options
+      : { ...options, mutation: { ...options.mutation, mutationKey } }
+    : { mutation: { mutationKey }, request: undefined };
+
+  const mutationFn: MutationFunction<
+    Awaited<ReturnType<typeof repairSchedule>>,
+    { wardId: number; scheduleId: number; data: BodyType<RepairScheduleInput> }
+  > = (props) => {
+    const { wardId, scheduleId, data } = props ?? {};
+
+    return repairSchedule(wardId, scheduleId, data, requestOptions);
+  };
+
+  return { mutationFn, ...mutationOptions };
+};
+
+export type RepairScheduleMutationResult = NonNullable<
+  Awaited<ReturnType<typeof repairSchedule>>
+>;
+export type RepairScheduleMutationBody = BodyType<RepairScheduleInput>;
+export type RepairScheduleMutationError = ErrorType<unknown>;
+
+/**
+ * @summary Repair critical conflicts in a schedule
+ */
+export const useRepairSchedule = <
+  TError = ErrorType<unknown>,
+  TContext = unknown,
+>(options?: {
+  mutation?: UseMutationOptions<
+    Awaited<ReturnType<typeof repairSchedule>>,
+    TError,
+    { wardId: number; scheduleId: number; data: BodyType<RepairScheduleInput> },
+    TContext
+  >;
+  request?: SecondParameter<typeof customFetch>;
+}): UseMutationResult<
+  Awaited<ReturnType<typeof repairSchedule>>,
+  TError,
+  { wardId: number; scheduleId: number; data: BodyType<RepairScheduleInput> },
+  TContext
+> => {
+  return useMutation(getRepairScheduleMutationOptions(options));
+};
+
+/**
  * @summary Validate a schedule and return issues
  */
 export const getValidateScheduleUrl = (wardId: number, scheduleId: number) => {
@@ -2597,3 +2803,114 @@ export const useValidateSchedule = <
 > => {
   return useMutation(getValidateScheduleMutationOptions(options));
 };
+
+/**
+ * @summary Get actionable recommendations for schedule issues
+ */
+export const getGetScheduleRecommendationsUrl = (
+  wardId: number,
+  scheduleId: number,
+) => {
+  return `/api/wards/${wardId}/schedules/${scheduleId}/recommendations`;
+};
+
+export const getScheduleRecommendations = async (
+  wardId: number,
+  scheduleId: number,
+  options?: RequestInit,
+): Promise<ScheduleRecommendationSummary> => {
+  return customFetch<ScheduleRecommendationSummary>(
+    getGetScheduleRecommendationsUrl(wardId, scheduleId),
+    {
+      ...options,
+      method: "GET",
+    },
+  );
+};
+
+export const getGetScheduleRecommendationsQueryKey = (
+  wardId: number,
+  scheduleId: number,
+) => {
+  return [
+    `/api/wards/${wardId}/schedules/${scheduleId}/recommendations`,
+  ] as const;
+};
+
+export const getGetScheduleRecommendationsQueryOptions = <
+  TData = Awaited<ReturnType<typeof getScheduleRecommendations>>,
+  TError = ErrorType<unknown>,
+>(
+  wardId: number,
+  scheduleId: number,
+  options?: {
+    query?: UseQueryOptions<
+      Awaited<ReturnType<typeof getScheduleRecommendations>>,
+      TError,
+      TData
+    >;
+    request?: SecondParameter<typeof customFetch>;
+  },
+) => {
+  const { query: queryOptions, request: requestOptions } = options ?? {};
+
+  const queryKey =
+    queryOptions?.queryKey ??
+    getGetScheduleRecommendationsQueryKey(wardId, scheduleId);
+
+  const queryFn: QueryFunction<
+    Awaited<ReturnType<typeof getScheduleRecommendations>>
+  > = ({ signal }) =>
+    getScheduleRecommendations(wardId, scheduleId, {
+      signal,
+      ...requestOptions,
+    });
+
+  return {
+    queryKey,
+    queryFn,
+    enabled: !!(wardId && scheduleId),
+    ...queryOptions,
+  } as UseQueryOptions<
+    Awaited<ReturnType<typeof getScheduleRecommendations>>,
+    TError,
+    TData
+  > & { queryKey: QueryKey };
+};
+
+export type GetScheduleRecommendationsQueryResult = NonNullable<
+  Awaited<ReturnType<typeof getScheduleRecommendations>>
+>;
+export type GetScheduleRecommendationsQueryError = ErrorType<unknown>;
+
+/**
+ * @summary Get actionable recommendations for schedule issues
+ */
+
+export function useGetScheduleRecommendations<
+  TData = Awaited<ReturnType<typeof getScheduleRecommendations>>,
+  TError = ErrorType<unknown>,
+>(
+  wardId: number,
+  scheduleId: number,
+  options?: {
+    query?: UseQueryOptions<
+      Awaited<ReturnType<typeof getScheduleRecommendations>>,
+      TError,
+      TData
+    >;
+    request?: SecondParameter<typeof customFetch>;
+  },
+): UseQueryResult<TData, TError> & { queryKey: QueryKey } {
+  const queryOptions = getGetScheduleRecommendationsQueryOptions(
+    wardId,
+    scheduleId,
+    options,
+  );
+
+  const query = useQuery(queryOptions) as UseQueryResult<TData, TError> & {
+    queryKey: QueryKey;
+  };
+
+  return { ...query, queryKey: queryOptions.queryKey };
+}

@@ -6,7 +6,7 @@
  * OpenAPI spec version: 0.1.0
  */
 
-export interface GenerateScheduleInput {
+export interface RepairScheduleInput {
   /** balanced | fairness | coverage | new_nurse_protection */
   priorityMode?: string;
   overwriteManualEdits?: boolean;

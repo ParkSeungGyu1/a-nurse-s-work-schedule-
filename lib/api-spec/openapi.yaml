@@ -653,6 +653,66 @@ paths:
               schema:
                 $ref: "#/components/schemas/ScheduleDetail"
 
+  /wards/{wardId}/schedules/{scheduleId}/regenerate-partial:
+    post:
+      operationId: regeneratePartialSchedule
+      tags: [schedules]
+      summary: Regenerate only selected dates in a schedule
+      parameters:
+        - name: wardId
+          in: path
+          required: true
+          schema:
+            type: integer
+        - name: scheduleId
+          in: path
+          required: true
+          schema:
+            type: integer
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/PartialRegenerateInput"
+      responses:
+        "200":
+          description: Partially regenerated schedule with validation results
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ScheduleDetail"
+
+  /wards/{wardId}/schedules/{scheduleId}/repair:
+    post:
+      operationId: repairSchedule
+      tags: [schedules]
+      summary: Repair critical conflicts in a schedule
+      parameters:
+        - name: wardId
+          in: path
+          required: true
+          schema:
+            type: integer
+        - name: scheduleId
+          in: path
+          required: true
+          schema:
+            type: integer
+      requestBody:
+        required: false
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/RepairScheduleInput"
+      responses:
+        "200":
+          description: Repaired schedule with validation results
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ScheduleDetail"
+
   /wards/{wardId}/schedules/{scheduleId}/validate:
     post:
       operationId: validateSchedule
@@ -678,6 +738,30 @@ paths:
                 type: array
                 items:
                   $ref: "#/components/schemas/ValidationResult"
+
+  /wards/{wardId}/schedules/{scheduleId}/recommendations:
+    get:
+      operationId: getScheduleRecommendations
+      tags: [schedules]
+      summary: Get actionable recommendations for schedule issues
+      parameters:
+        - name: wardId
+          in: path
+          required: true
+          schema:
+            type: integer
+        - name: scheduleId
+          in: path
+          required: true
+          schema:
+            type: integer
+      responses:
+        "200":
+          description: Recommendation dashboard data
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ScheduleRecommendationSummary"
 
 components:
   schemas:
@@ -1135,9 +1219,106 @@ components:
       properties:
         priorityMode:
           type: string
-          description: "balanced | fairness | coverage"
+          description: "balanced | fairness | coverage | new_nurse_protection"
         overwriteManualEdits:
           type: boolean
+
+    PartialRegenerateInput:
+      type: object
+      required: [dates]
+      properties:
+        dates:
+          type: array
+          items:
+            type: string
+        priorityMode:
+          type: string
+          description: "balanced | fairness | coverage | new_nurse_protection"
+        overwriteManualEdits:
+          type: boolean
+
+    RepairScheduleInput:
+      type: object
+      properties:
+        priorityMode:
+          type: string
+          description: "balanced | fairness | coverage | new_nurse_protection"
+        overwriteManualEdits:
+          type: boolean
+
+    RecommendationCandidate:
+      type: object
+      required: [nurseId, nurseName, experienceLevel, tier, currentShift, score, reasons, cautions]
+      properties:
+        nurseId:
+          type: integer
+        nurseName:
+          type: string
+        experienceLevel:
+          type: string
+        tier:
+          type: string
+          description: "strict | fallback"
+        currentShift:
+          type: string
+        score:
+          type: number
+        reasons:
+          type: array
+          items:
+            type: string
+        cautions:
+          type: array
+          items:
+            type: string
+
+    RecommendationItem:
+      type: object
+      required: [id, type, severity, title, summary, actionText, strictCandidateCount, fallbackCandidateCount, candidates]
+      properties:
+        id:
+          type: string
+        type:
+          type: string
+          description: "understaffed_shift | rule_conflict"
+        severity:
+          type: string
+          description: "critical | warning | info"
+        title:
+          type: string
+        summary:
+          type: string
+        actionText:
+          type: string
+        date:
+          type: ["string", "null"]
+        shiftType:
+          type: ["string", "null"]
+        shortageCount:
+          type: ["integer", "null"]
+        strictCandidateCount:
+          type: integer
+        fallbackCandidateCount:
+          type: integer
+        candidates:
+          type: array
+          items:
+            $ref: "#/components/schemas/RecommendationCandidate"
+
+    ScheduleRecommendationSummary:
+      type: object
+      required: [totalIssues, actionableIssues, unresolvedCriticalCount, items]
+      properties:
+        totalIssues:
+          type: integer
+        actionableIssues:
+          type: integer
+        unresolvedCriticalCount:
+          type: integer
+        items:
+          type: array
+          items:
+            $ref: "#/components/schemas/RecommendationItem"
 
     # ── VALIDATION ────────────────────────────────────────────────────────────────
     ValidationResult:

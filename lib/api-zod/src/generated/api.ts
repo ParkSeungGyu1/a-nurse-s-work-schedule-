@@ -568,11 +568,114 @@ export const GenerateScheduleBody = zod.object({
   priorityMode: zod
     .string()
     .optional()
-    .describe("balanced | fairness | coverage"),
+    .describe("balanced | fairness | coverage | new_nurse_protection"),
   overwriteManualEdits: zod.boolean().optional(),
 });
 
 export const GenerateScheduleResponse = zod.object({
+  id: zod.number(),
+  wardId: zod.number(),
+  yearMonth: zod.string(),
+  status: zod.string(),
+  entries: zod.array(
+    zod.object({
+      id: zod.number(),
+      scheduleId: zod.number(),
+      nurseId: zod.number(),
+      nurseName: zod.string().nullish(),
+      nurseExperienceLevel: zod.string().nullish(),
+      date: zod.string(),
+      shiftType: zod.string().describe("D | E | N | OFF"),
+      isManualEdit: zod.boolean().optional(),
+    }),
+  ),
+  validationResults: zod.array(
+    zod.object({
+      id: zod.number(),
+      scheduleId: zod.number(),
+      severity: zod.string().describe("critical | warning | info"),
+      ruleCode: zod.string(),
+      message: zod.string(),
+      date: zod.string().nullish(),
+      nurseId: zod.number().nullish(),
+      nurseName: zod.string().nullish(),
+      shiftType: zod.string().nullish(),
+    }),
+  ),
+  conflictCount: zod.number().optional(),
+  createdAt: zod.string(),
+  updatedAt: zod.string().optional(),
+});
+
+/**
+ * @summary Regenerate only selected dates in a schedule
+ */
+export const RegeneratePartialScheduleParams = zod.object({
+  wardId: zod.coerce.number(),
+  scheduleId: zod.coerce.number(),
+});
+
+export const RegeneratePartialScheduleBody = zod.object({
+  dates: zod.array(zod.string()),
+  priorityMode: zod
+    .string()
+    .optional()
+    .describe("balanced | fairness | coverage | new_nurse_protection"),
+  overwriteManualEdits: zod.boolean().optional(),
+});
+
+export const RegeneratePartialScheduleResponse = zod.object({
+  id: zod.number(),
+  wardId: zod.number(),
+  yearMonth: zod.string(),
+  status: zod.string(),
+  entries: zod.array(
+    zod.object({
+      id: zod.number(),
+      scheduleId: zod.number(),
+      nurseId: zod.number(),
+      nurseName: zod.string().nullish(),
+      nurseExperienceLevel: zod.string().nullish(),
+      date: zod.string(),
+      shiftType: zod.string().describe("D | E | N | OFF"),
+      isManualEdit: zod.boolean().optional(),
+    }),
+  ),
+  validationResults: zod.array(
+    zod.object({
+      id: zod.number(),
+      scheduleId: zod.number(),
+      severity: zod.string().describe("critical | warning | info"),
+      ruleCode: zod.string(),
+      message: zod.string(),
+      date: zod.string().nullish(),
+      nurseId: zod.number().nullish(),
+      nurseName: zod.string().nullish(),
+      shiftType: zod.string().nullish(),
+    }),
+  ),
+  conflictCount: zod.number().optional(),
+  createdAt: zod.string(),
+  updatedAt: zod.string().optional(),
+});
+
+/**
+ * @summary Repair critical conflicts in a schedule
+ */
+export const RepairScheduleParams = zod.object({
+  wardId: zod.coerce.number(),
+  scheduleId: zod.coerce.number(),
+});
+
+export const RepairScheduleBody = zod.object({
+  priorityMode: zod
+    .string()
+    .optional()
+    .describe("balanced | fairness | coverage | new_nurse_protection"),
+  overwriteManualEdits: zod.boolean().optional(),
+});
+
+export const RepairScheduleResponse = zod.object({
   id: zod.number(),
   wardId: zod.number(),
   yearMonth: zod.string(),
@@ -627,3 +730,44 @@ export const ValidateScheduleResponseItem = zod.object({
   shiftType: zod.string().nullish(),
 });
 export const ValidateScheduleResponse = zod.array(ValidateScheduleResponseItem);
+
+/**
+ * @summary Get actionable recommendations for schedule issues
+ */
+export const GetScheduleRecommendationsParams = zod.object({
+  wardId: zod.coerce.number(),
+  scheduleId: zod.coerce.number(),
+});
+
+export const GetScheduleRecommendationsResponse = zod.object({
+  totalIssues: zod.number(),
+  actionableIssues: zod.number(),
+  unresolvedCriticalCount: zod.number(),
+  items: zod.array(
+    zod.object({
+      id: zod.string(),
+      type: zod.string().describe("understaffed_shift | rule_conflict"),
+      severity: zod.string().describe("critical | warning | info"),
+      title: zod.string(),
+      summary: zod.string(),
+      actionText: zod.string(),
+      date: zod.string().nullish(),
+      shiftType: zod.string().nullish(),
+      shortageCount: zod.number().nullish(),
+      strictCandidateCount: zod.number(),
+      fallbackCandidateCount: zod.number(),
+      candidates: zod.array(
+        zod.object({
+          nurseId: zod.number(),
+          nurseName: zod.string(),
+          experienceLevel: zod.string(),
+          tier: zod.string().describe("strict | fallback"),
+          currentShift: zod.string(),
+          score: zod.number(),
+          reasons: zod.array(zod.string()),
+          cautions: zod.array(zod.string()),
+        }),
+      ),
+    }),
+  ),
+});

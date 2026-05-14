@@ -1,5 +1,5 @@
 import { Link, useLocation } from "wouter";
-import { LayoutDashboard, Building2, CalendarDays, ChevronRight, Menu, X, Plus } from "lucide-react";
+import { LayoutDashboard, Building2, CalendarDays, ChevronRight, Menu, Plus } from "lucide-react";
 import { cn } from "@/lib/utils";
 import { useListWards } from "@workspace/api-client-react";
 import { useState, useEffect } from "react";
@@ -18,7 +18,7 @@ const wardSubNav: WardSubNav[] = [
   { label: "인력 요구", path: "/staffing" },
   { label: "개인 요청", path: "/requests" },
   { label: "스케줄", path: "/schedule" },
-  { label: "내보내기", path: "/export" },
+  { label: "미리보기", path: "/export" },
 ];
 
 interface SidebarContentProps {
@@ -33,7 +33,6 @@ function SidebarContent({ location, onNavigate }: SidebarContentProps) {
   const wardMatch = location.match(/^\/wards\/(\d+)/);
   const currentWardId = wardMatch ? Number(wardMatch[1]) : null;
 
-  // Auto-expand active ward
   useEffect(() => {
     if (currentWardId) setExpandedWardId(currentWardId);
   }, [currentWardId]);
@@ -50,7 +49,7 @@ function SidebarContent({ location, onNavigate }: SidebarContentProps) {
       onClick={onNavigate}
       data-testid={`nav-${label}`}
       className={cn(
-        "flex items-center gap-2.5 px-3 py-2 rounded-md text-sm font-medium transition-colors",
+        "flex items-center gap-2.5 rounded-md px-3 py-2 text-sm font-medium transition-colors",
         isActive(href, exact)
           ? "bg-primary text-primary-foreground"
           : "text-sidebar-foreground hover:bg-sidebar-accent hover:text-accent-foreground"
@@ -62,12 +61,12 @@ function SidebarContent({ location, onNavigate }: SidebarContentProps) {
   );
 
   return (
-    <nav className="flex-1 px-2 space-y-0.5 py-3 overflow-y-auto">
-      {navLink("/", "대시보드", <LayoutDashboard className="w-4 h-4" />, true)}
-      {navLink("/wards", "병동 관리", <Building2 className="w-4 h-4" />)}
+    <nav className="flex-1 space-y-0.5 overflow-y-auto px-2 py-3">
+      {navLink("/", "대시보드", <LayoutDashboard className="h-4 w-4" />, true)}
+      {navLink("/wards", "병동 관리", <Building2 className="h-4 w-4" />)}
 
-      <div className="pt-3 pb-1">
-        <p className="px-3 text-xs font-semibold text-muted-foreground uppercase tracking-wider mb-1">병동</p>
+      <div className="pb-1 pt-3">
+        <p className="mb-1 px-3 text-xs font-semibold uppercase tracking-wider text-muted-foreground">병동</p>
       </div>
 
       {wards?.map((ward) => {
@@ -81,24 +80,26 @@ function SidebarContent({ location, onNavigate }: SidebarContentProps) {
               data-testid={`nav-ward-${ward.id}`}
               onClick={() => setExpandedWardId(isExpanded ? null : ward.id)}
               className={cn(
-                "w-full flex items-center gap-2 px-3 py-2 rounded-md text-sm font-medium transition-colors text-left",
+                "flex w-full items-center gap-2 rounded-md px-3 py-2 text-left text-sm font-medium transition-colors",
                 isWardActive
                   ? "bg-sidebar-accent text-accent-foreground"
                   : "text-sidebar-foreground hover:bg-sidebar-accent hover:text-accent-foreground"
               )}
             >
-              <Building2 className="w-3.5 h-3.5 flex-shrink-0 text-primary" />
+              <Building2 className="h-3.5 w-3.5 flex-shrink-0 text-primary" />
               <span className="flex-1 truncate">{ward.name}</span>
-              <ChevronRight className={cn("w-3 h-3 transition-transform flex-shrink-0", isExpanded && "rotate-90")} />
+              <ChevronRight className={cn("h-3 w-3 flex-shrink-0 transition-transform", isExpanded && "rotate-90")} />
             </button>
 
             {isExpanded && (
-              <div className="ml-4 pl-2 border-l border-border mt-0.5 space-y-0.5">
+              <div className="mt-0.5 ml-4 space-y-0.5 border-l border-border pl-2">
                 {wardSubNav.map((sub) => {
                   const href = `${wardBase}${sub.path}`;
-                  const subActive = sub.path === ""
-                    ? location === wardBase || location === `${wardBase}/`
-                    : location.startsWith(href);
+                  const subActive =
+                    sub.path === ""
+                      ? location === wardBase || location === `${wardBase}/`
+                      : location.startsWith(href);
+
                   return (
                     <Link
                       key={sub.path}
@@ -106,10 +107,10 @@ function SidebarContent({ location, onNavigate }: SidebarContentProps) {
                       onClick={onNavigate}
                       data-testid={`nav-ward-${ward.id}${sub.path || "-settings"}`}
                       className={cn(
-                        "flex items-center px-2 py-1.5 rounded text-xs font-medium transition-colors",
+                        "flex items-center rounded px-2 py-1.5 text-xs font-medium transition-colors",
                         subActive
-                          ? "bg-primary/10 text-primary font-semibold"
-                          : "text-muted-foreground hover:text-foreground hover:bg-muted"
+                          ? "bg-primary/10 font-semibold text-primary"
+                          : "text-muted-foreground hover:bg-muted hover:text-foreground"
                       )}
                     >
                       {sub.label}
@@ -126,9 +127,9 @@ function SidebarContent({ location, onNavigate }: SidebarContentProps) {
         href="/wards"
         onClick={onNavigate}
         data-testid="nav-add-ward"
-        className="flex items-center gap-2 px-3 py-2 rounded-md text-xs text-muted-foreground hover:text-primary hover:bg-muted transition-colors"
+        className="flex items-center gap-2 rounded-md px-3 py-2 text-xs text-muted-foreground transition-colors hover:bg-muted hover:text-primary"
       >
-        <Plus className="w-3 h-3" /> 병동 추가
+        <Plus className="h-3 w-3" /> 병동 추가
       </Link>
     </nav>
   );
@@ -138,61 +139,49 @@ export function AppLayout({ children }: { children: React.ReactNode }) {
   const [location] = useLocation();
   const [mobileOpen, setMobileOpen] = useState(false);
 
-  // Close drawer on route change
   useEffect(() => {
     setMobileOpen(false);
   }, [location]);
 
   return (
-    <div className="min-h-screen flex flex-col" data-testid="app-layout">
-      {/* Top header */}
-      <header
-        className="bg-card border-b border-border h-14 flex items-center px-4 sticky top-0 z-30 shadow-sm gap-3"
-        data-testid="header"
-      >
-        {/* Mobile hamburger */}
+    <div className="flex min-h-screen flex-col" data-testid="app-layout">
+      <header className="sticky top-0 z-30 flex h-14 items-center gap-3 border-b border-border bg-card px-4 shadow-sm" data-testid="header">
         <Button
           variant="ghost"
           size="sm"
-          className="md:hidden -ml-1 h-9 w-9 p-0"
+          className="-ml-1 h-9 w-9 p-0 md:hidden"
           onClick={() => setMobileOpen(true)}
           aria-label="메뉴 열기"
           data-testid="button-mobile-menu"
         >
-          <Menu className="w-5 h-5" />
+          <Menu className="h-5 w-5" />
         </Button>
 
         <Link href="/" className="flex items-center gap-2">
-          <div className="bg-primary text-primary-foreground p-1.5 rounded-md">
-            <CalendarDays className="w-4 h-4" />
+          <div className="rounded-md bg-primary p-1.5 text-primary-foreground">
+            <CalendarDays className="h-4 w-4" />
           </div>
-          <span className="font-bold text-lg text-foreground tracking-tight">너스케줄</span>
+          <span className="text-lg font-bold tracking-tight text-foreground">병동 스케줄러</span>
         </Link>
       </header>
 
-      <div className="flex flex-1 min-h-0">
-        {/* Desktop sidebar */}
-        <aside
-          className="hidden md:flex w-56 bg-sidebar border-r border-sidebar-border flex-shrink-0 flex-col overflow-y-auto"
-          data-testid="sidebar"
-        >
+      <div className="flex min-h-0 flex-1">
+        <aside className="hidden w-56 flex-shrink-0 flex-col overflow-y-auto border-r border-sidebar-border bg-sidebar md:flex" data-testid="sidebar">
           <SidebarContent location={location} />
         </aside>
 
-        {/* Mobile drawer */}
         <Sheet open={mobileOpen} onOpenChange={setMobileOpen}>
-          <SheetContent side="left" className="w-64 p-0 bg-sidebar border-sidebar-border">
-            <div className="flex items-center gap-2 px-4 h-14 border-b border-sidebar-border">
-              <div className="bg-primary text-primary-foreground p-1.5 rounded-md">
-                <CalendarDays className="w-4 h-4" />
+          <SheetContent side="left" className="w-64 border-sidebar-border bg-sidebar p-0">
+            <div className="flex h-14 items-center gap-2 border-b border-sidebar-border px-4">
+              <div className="rounded-md bg-primary p-1.5 text-primary-foreground">
+                <CalendarDays className="h-4 w-4" />
               </div>
-              <span className="font-bold text-base tracking-tight">너스케줄</span>
+              <span className="text-base font-bold tracking-tight">병동 스케줄러</span>
             </div>
             <SidebarContent location={location} onNavigate={() => setMobileOpen(false)} />
           </SheetContent>
         </Sheet>
 
-        {/* Main content */}
         <main className="flex-1 overflow-auto bg-background" data-testid="main-content">
           {children}
         </main>

@@ -273,7 +273,59 @@ export interface ScheduleEntriesPatch {
 }
 
 export interface GenerateScheduleInput {
-  /** balanced | fairness | coverage */
+  /** balanced | fairness | coverage | new_nurse_protection */
   priorityMode?: string;
   overwriteManualEdits?: boolean;
+}
+
+export interface PartialRegenerateInput {
+  dates: string[];
+  /** balanced | fairness | coverage | new_nurse_protection */
+  priorityMode?: string;
+  overwriteManualEdits?: boolean;
+}
+
+export interface RepairScheduleInput {
+  /** balanced | fairness | coverage | new_nurse_protection */
+  priorityMode?: string;
+  overwriteManualEdits?: boolean;
+}
+
+export interface RecommendationCandidate {
+  nurseId: number;
+  nurseName: string;
+  experienceLevel: string;
+  /** strict | fallback */
+  tier: string;
+  currentShift: string;
+  score: number;
+  reasons: string[];
+  cautions: string[];
+}
+
+export interface RecommendationItem {
+  id: string;
+  /** understaffed_shift | rule_conflict */
+  type: string;
+  /** critical | warning | info */
+  severity: string;
+  title: string;
+  summary: string;
+  actionText: string;
+  /** @nullable */
+  date?: string | null;
+  /** @nullable */
+  shiftType?: string | null;
+  /** @nullable */
+  shortageCount?: number | null;
+  strictCandidateCount: number;
+  fallbackCandidateCount: number;
+  candidates: RecommendationCandidate[];
+}
+
+export interface ScheduleRecommendationSummary {
+  totalIssues: number;
+  actionableIssues: number;
+  unresolvedCriticalCount: number;
+  items: RecommendationItem[];
 }

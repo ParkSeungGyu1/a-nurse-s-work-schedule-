@@ -38,7 +38,7 @@ export default function StaffingPage() {
   const days = getDaysInMonth(yearMonth);
 
   function getDaysInMonth(ym: string) {
-    const count = dayjs(ym + "-01").daysInMonth();
+    const count = dayjs(`${ym}-01`).daysInMonth();
     return Array.from({ length: count }, (_, i) => `${ym}-${String(i + 1).padStart(2, "0")}`);
   }
 
@@ -65,6 +65,7 @@ export default function StaffingPage() {
         reqs.push({ date, shiftType: shift, requiredCount: getReqCount(date, shift), isHoliday: false });
       }
     }
+
     upsert.mutate({ wardId, data: { requirements: reqs } }, {
       onSuccess: () => {
         queryClient.invalidateQueries({ queryKey: getListStaffingRequirementsQueryKey(wardId, yearMonth) });
@@ -75,42 +76,43 @@ export default function StaffingPage() {
     });
   }
 
-  const prevMonth = () => setYearMonth(dayjs(yearMonth + "-01").subtract(1, "month").format("YYYY-MM"));
-  const nextMonth = () => setYearMonth(dayjs(yearMonth + "-01").add(1, "month").format("YYYY-MM"));
+  const prevMonth = () => setYearMonth(dayjs(`${yearMonth}-01`).subtract(1, "month").format("YYYY-MM"));
+  const nextMonth = () => setYearMonth(dayjs(`${yearMonth}-01`).add(1, "month").format("YYYY-MM"));
 
   return (
-    <div className="p-4 md:p-6 max-w-4xl mx-auto" data-testid="staffing-page">
-      <div className="flex flex-wrap items-center justify-between gap-3 mb-4 md:mb-6">
+    <div className="mx-auto max-w-4xl p-4 md:p-6" data-testid="staffing-page">
+      <div className="mb-4 flex flex-wrap items-center justify-between gap-3 md:mb-6">
         <div>
-          <h1 className="text-xl md:text-2xl font-bold tracking-tight">인력 요구 설정</h1>
-          <p className="text-muted-foreground text-xs md:text-sm mt-0.5">날짜별 D/E/N 필요 인원을 설정합니다.</p>
+          <h1 className="text-xl font-bold tracking-tight md:text-2xl">인력 요구 설정</h1>
+          <p className="mt-0.5 text-xs text-muted-foreground md:text-sm">날짜별 D/E/N 필요 인원을 설정합니다.</p>
         </div>
         <div className="flex items-center gap-2">
-          <Button variant="outline" size="sm" onClick={prevMonth} data-testid="button-prev-month"><ChevronLeft className="w-4 h-4" /></Button>
-          <span className="font-semibold text-sm w-20 text-center" data-testid="text-year-month">{yearMonth}</span>
-          <Button variant="outline" size="sm" onClick={nextMonth} data-testid="button-next-month"><ChevronRight className="w-4 h-4" /></Button>
+          <Button variant="outline" size="sm" onClick={prevMonth} data-testid="button-prev-month"><ChevronLeft className="h-4 w-4" /></Button>
+          <span className="w-20 text-center text-sm font-semibold" data-testid="text-year-month">{yearMonth}</span>
+          <Button variant="outline" size="sm" onClick={nextMonth} data-testid="button-next-month"><ChevronRight className="h-4 w-4" /></Button>
           <Button size="sm" onClick={handleSave} disabled={upsert.isPending} data-testid="button-save-staffing">
-            <Save className="w-4 h-4 md:mr-1.5" />
+            <Save className="h-4 w-4 md:mr-1.5" />
             <span className="hidden md:inline">{upsert.isPending ? "저장 중..." : "저장"}</span>
           </Button>
         </div>
       </div>
 
-      {/* Bulk edit */}
       <Card className="mb-3">
-        <CardHeader className="py-2 px-3 md:px-4"><CardTitle className="text-sm">일괄 설정</CardTitle></CardHeader>
-        <CardContent className="flex flex-wrap items-center gap-3 py-2 px-3 md:px-4">
+        <CardHeader className="px-3 py-2 md:px-4">
+          <CardTitle className="text-sm">일괄 설정</CardTitle>
+        </CardHeader>
+        <CardContent className="flex flex-wrap items-center gap-3 px-3 py-2 md:px-4">
           {SHIFT_TYPES.map((s) => (
             <div key={s} className="flex items-center gap-2">
-              <span className={`text-xs font-bold w-12 md:w-16 ${SHIFT_COLORS[s]}`}>{SHIFT_LABELS[s]} ({s})</span>
+              <span className={`w-12 text-xs font-bold md:w-16 ${SHIFT_COLORS[s]}`}>{SHIFT_LABELS[s]} ({s})</span>
               <Input
                 type="number"
-                className="w-12 h-7 text-center text-sm"
+                className="h-7 w-12 text-center text-sm"
                 defaultValue={3}
                 data-testid={`input-bulk-${s}`}
                 onBlur={(e) => applyBulk(s, Number(e.target.value))}
               />
-              <span className="text-xs text-muted-foreground hidden sm:inline">명 일괄 적용</span>
+              <span className="hidden text-xs text-muted-foreground sm:inline">모든 날짜 적용</span>
             </div>
           ))}
         </CardContent>
@@ -120,14 +122,14 @@ export default function StaffingPage() {
         <Skeleton className="h-96" />
       ) : (
         <Card>
-          <CardContent className="p-0 overflow-x-auto">
-            <table className="w-full text-xs border-collapse" data-testid="table-staffing" style={{ minWidth: "340px" }}>
+          <CardContent className="overflow-x-auto p-0">
+            <table className="w-full min-w-[340px] border-collapse text-xs" data-testid="table-staffing">
               <thead>
-                <tr className="bg-muted/50 border-b">
-                  <th className="p-2 text-left font-medium text-muted-foreground sticky left-0 bg-muted/50 w-16">날짜</th>
-                  <th className="p-2 text-left font-medium text-muted-foreground w-8">요일</th>
+                <tr className="border-b bg-muted/50">
+                  <th className="sticky left-0 w-16 bg-muted/50 p-2 text-left font-medium text-muted-foreground">날짜</th>
+                  <th className="w-8 p-2 text-left font-medium text-muted-foreground">요일</th>
                   {SHIFT_TYPES.map((s) => (
-                    <th key={s} className={`p-2 font-semibold text-center ${SHIFT_COLORS[s]}`}>{SHIFT_LABELS[s]} ({s})</th>
+                    <th key={s} className={`p-2 text-center font-semibold ${SHIFT_COLORS[s]}`}>{SHIFT_LABELS[s]} ({s})</th>
                   ))}
                 </tr>
               </thead>
@@ -137,15 +139,15 @@ export default function StaffingPage() {
                   const isWeekend = dow === 0 || dow === 6;
                   return (
                     <tr key={date} className={`border-b last:border-0 ${isWeekend ? "bg-muted/20" : ""}`} data-testid={`row-staffing-${date}`}>
-                      <td className="p-2 font-medium sticky left-0 bg-inherit">{date.slice(5)}</td>
-                      <td className={`p-2 ${isWeekend ? "text-destructive font-semibold" : "text-muted-foreground"}`}>{DAYS_KR[dow]}</td>
+                      <td className="sticky left-0 bg-inherit p-2 font-medium">{date.slice(5)}</td>
+                      <td className={`p-2 ${isWeekend ? "font-semibold text-destructive" : "text-muted-foreground"}`}>{DAYS_KR[dow]}</td>
                       {SHIFT_TYPES.map((s) => (
                         <td key={s} className="p-1.5 text-center">
                           <Input
                             type="number"
                             min={0}
                             max={20}
-                            className="w-12 h-7 text-center mx-auto text-xs"
+                            className="mx-auto h-7 w-12 text-center text-xs"
                             value={getReqCount(date, s)}
                             onChange={(e) => setReqCount(date, s, Number(e.target.value))}
                             data-testid={`input-staffing-${date}-${s}`}

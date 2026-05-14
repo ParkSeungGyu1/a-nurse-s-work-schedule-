@@ -6,6 +6,7 @@ import {
   validationResultsTable,
   nursesTable,
   wardRulesTable,
+  pairRulesTable,
   dailyRequirementsTable,
   nurseConstraintsTable,
 } from "@workspace/db";
@@ -20,10 +21,17 @@ import {
   UpdateScheduleEntriesBody,
   GenerateScheduleParams,
   GenerateScheduleBody,
+  RegeneratePartialScheduleParams,
+  RegeneratePartialScheduleBody,
+  RepairScheduleParams,
+  RepairScheduleBody,
+  GetScheduleRecommendationsParams,
   ValidateScheduleParams,
 } from "@workspace/api-zod";
 import { generateSchedule } from "../services/generator";
 import { validateSchedule } from "../services/validator";
+import { buildScheduleRecommendations } from "../services/recommendations";
+import { inArray } from "drizzle-orm";
 
 const router = Router({ mergeParams: true });
 
@@ -84,6 +92,181 @@ async function getScheduleDetail(wardId: number, scheduleId: number) {
   };
 }
 
+function getMonthDates(yearMonth: string) {
+  const [year, month] = yearMonth.split("-").map(Number);
+  const daysInMonth = new Date(year, month, 0).getDate();
+  return Array.from({ length: daysInMonth }, (_, index) => {
+    const day = String(index + 1).padStart(2, "0");
+    return `${yearMonth}-${day}`;
+  });
+}
+
+async function loadScheduleGenerationContext(wardId: number, yearMonth: string) {
+  const nurses = await db
+    .select()
+    .from(nursesTable)
+    .where(eq(nursesTable.wardId, wardId));
+
+  const [rules] = await db
+    .select()
+    .from(wardRulesTable)
+    .where(eq(wardRulesTable.wardId, wardId));
+
+  const requirements = await db
+    .select()
+    .from(dailyRequirementsTable)
+    .where(
+      and(
+        eq(dailyRequirementsTable.wardId, wardId),
+        sql`${dailyRequirementsTable.date} like ${`${yearMonth}%`}`
+      )
+    );
+
+  const pairRules = await db
+    .select()
+    .from(pairRulesTable)
+    .where(eq(pairRulesTable.wardId, wardId));
+
+  const nurseIds = nurses.map((nurse) => nurse.id);
+  const constraints =
+    nurseIds.length > 0
+      ? await db.select().from(nurseConstraintsTable).where(
+          sql`${nurseConstraintsTable.nurseId} = ANY(${sql.raw(`ARRAY[${nurseIds.join(",")}]`)})`
+        )
+      : [];
+
+  return { nurses, rules, requirements, pairRules, constraints };
+}
+
+async function persistValidationResults(
+  scheduleId: number,
+  wardId: number,
+  yearMonth: string
+) {
+  const { nurses, rules, requirements, pairRules } =
+    await loadScheduleGenerationContext(wardId, yearMonth);
+  if (!rules) return [];
+
+  const allEntries = await db
+    .select()
+    .from(scheduleEntriesTable)
+    .where(eq(scheduleEntriesTable.scheduleId, scheduleId));
+
+  const issues = validateSchedule(allEntries, nurses, rules, requirements, pairRules);
+
+  await db
+    .delete(validationResultsTable)
+    .where(eq(validationResultsTable.scheduleId, scheduleId));
+
+  if (issues.length > 0) {
+    await db.insert(validationResultsTable).values(
+      issues.map((issue) => ({
+        scheduleId,
+        severity: issue.severity,
+        ruleCode: issue.ruleCode,
+        message: issue.message,
+        date: issue.date,
+        nurseId: issue.nurseId,
+        shiftType: issue.shiftType,
+      }))
+    );
+  }
+
+  return issues;
+}
+
+async function regenerateScheduleDetail(
+  wardId: number,
+  schedule: { id: number; wardId: number; yearMonth: string },
+  options: {
+    overwriteManualEdits?: boolean;
+    targetDates?: string[];
+    priorityMode?: "balanced" | "fairness" | "coverage" | "new_nurse_protection";
+  }
+) {
+  const { nurses, rules, requirements, constraints, pairRules } =
+    await loadScheduleGenerationContext(wardId, schedule.yearMonth);
+
+  if (!rules || nurses.length === 0) {
+    throw new Error("Ward rules or nurses not configured");
+  }
+
+  const targetDates = [...new Set(options.targetDates ?? getMonthDates(schedule.yearMonth))].sort();
+  if (targetDates.length === 0) {
+    return getScheduleDetail(wardId, schedule.id);
+  }
+
+  const overwriteManualEdits = options.overwriteManualEdits ?? false;
+  const targetDateSet = new Set(targetDates);
+
+  const preservedManualKeys = overwriteManualEdits
+    ? new Set<string>()
+    : new Set(
+        (
+          await db
+            .select({
+              nurseId: scheduleEntriesTable.nurseId,
+              date: scheduleEntriesTable.date,
+            })
+            .from(scheduleEntriesTable)
+            .where(
+              and(
+                eq(scheduleEntriesTable.scheduleId, schedule.id),
+                eq(scheduleEntriesTable.isManualEdit, true),
+                inArray(scheduleEntriesTable.date, targetDates)
+              )
+            )
+        ).map((entry) => `${entry.nurseId}:${entry.date}`)
+      );
+
+  await db
+    .delete(scheduleEntriesTable)
+    .where(
+      and(
+        eq(scheduleEntriesTable.scheduleId, schedule.id),
+        inArray(scheduleEntriesTable.date, targetDates),
+        overwriteManualEdits ? sql`true` : eq(scheduleEntriesTable.isManualEdit, false)
+      )
+    );
+
+  const generated = generateSchedule(
+    schedule.yearMonth,
+    nurses,
+    rules,
+    requirements,
+    constraints,
+    pairRules,
+    { priorityMode: options.priorityMode }
+  );
+
+  const generatedToInsert = generated.filter(
+    (entry) =>
+      targetDateSet.has(entry.date) &&
+      !preservedManualKeys.has(`${entry.nurseId}:${entry.date}`)
+  );
+
+  if (generatedToInsert.length > 0) {
+    await db.insert(scheduleEntriesTable).values(
+      generatedToInsert.map((entry) => ({
+        scheduleId: schedule.id,
+        nurseId: entry.nurseId,
+        date: entry.date,
+        shiftType: entry.shiftType,
+        isManualEdit: false,
+      }))
+    );
+  }
+
+  await persistValidationResults(schedule.id, wardId, schedule.yearMonth);
+
+  await db
+    .update(schedulesTable)
+    .set({ updatedAt: new Date() })
+    .where(eq(schedulesTable.id, schedule.id));
+
+  return getScheduleDetail(wardId, schedule.id);
+}
+
 // GET /api/wards/:wardId/schedules
 router.get("/", async (req, res) => {
   const { wardId } = ListSchedulesParams.parse({ wardId: Number(req.params.wardId) });
@@ -134,50 +317,10 @@ router.post("/", async (req, res) => {
     .returning();
 
   if (body.autoGenerate) {
-    // Auto-generate entries
-    const nurses = await db
-      .select()
-      .from(nursesTable)
-      .where(eq(nursesTable.wardId, wardId));
-
-    const [rules] = await db
-      .select()
-      .from(wardRulesTable)
-      .where(eq(wardRulesTable.wardId, wardId));
-
-    const requirements = await db
-      .select()
-      .from(dailyRequirementsTable)
-      .where(eq(dailyRequirementsTable.wardId, wardId));
-
-    const nurseIds = nurses.map((n) => n.id);
-    const constraints =
-      nurseIds.length > 0
-        ? await db.select().from(nurseConstraintsTable).where(
-            sql`${nurseConstraintsTable.nurseId} = ANY(${sql.raw(`ARRAY[${nurseIds.join(",")}]`)})`
-          )
-        : [];
-
-    if (nurses.length > 0 && rules) {
-      const generated = generateSchedule(
-        body.yearMonth,
-        nurses,
-        rules,
-        requirements,
-        constraints
-      );
-      if (generated.length > 0) {
-        await db.insert(scheduleEntriesTable).values(
-          generated.map((e) => ({
-            scheduleId: schedule.id,
-            nurseId: e.nurseId,
-            date: e.date,
-            shiftType: e.shiftType,
-            isManualEdit: false,
-          }))
-        );
-      }
-    }
+    await regenerateScheduleDetail(wardId, schedule, {
+      overwriteManualEdits: true,
+      priorityMode: "balanced",
+    });
   }
 
   const detail = await getScheduleDetail(wardId, schedule.id);
@@ -288,89 +431,142 @@ router.post("/:scheduleId/generate", async (req, res) => {
     return;
   }
 
-  const requirements = await db
+  const detail = await regenerateScheduleDetail(wardId, schedule, {
+    overwriteManualEdits: body.overwriteManualEdits,
+    priorityMode: body.priorityMode as
+      | "balanced"
+      | "fairness"
+      | "coverage"
+      | "new_nurse_protection"
+      | undefined,
+  });
+  res.json(detail);
+});
+
+// POST /api/wards/:wardId/schedules/:scheduleId/regenerate-partial
+router.post("/:scheduleId/regenerate-partial", async (req, res) => {
+  const { wardId, scheduleId } = RegeneratePartialScheduleParams.parse({
+    wardId: Number(req.params.wardId),
+    scheduleId: Number(req.params.scheduleId),
+  });
+  const body = RegeneratePartialScheduleBody.parse(req.body);
+
+  const [schedule] = await db
     .select()
-    .from(dailyRequirementsTable)
-    .where(eq(dailyRequirementsTable.wardId, wardId));
-
-  const nurseIds = nurses.map((n) => n.id);
-  const constraints =
-    nurseIds.length > 0
-      ? await db.select().from(nurseConstraintsTable).where(
-          sql`${nurseConstraintsTable.nurseId} = ANY(${sql.raw(`ARRAY[${nurseIds.join(",")}]`)})`
-        )
-      : [];
-
-  // If not overwriting, only regenerate non-manual entries
-  if (!body.overwriteManualEdits) {
-    await db
-      .delete(scheduleEntriesTable)
-      .where(
-        and(
-          eq(scheduleEntriesTable.scheduleId, scheduleId),
-          eq(scheduleEntriesTable.isManualEdit, false)
-        )
-      );
-  } else {
-    await db
-      .delete(scheduleEntriesTable)
-      .where(eq(scheduleEntriesTable.scheduleId, scheduleId));
+    .from(schedulesTable)
+    .where(and(eq(schedulesTable.id, scheduleId), eq(schedulesTable.wardId, wardId)));
+  if (!schedule) {
+    res.status(404).json({ error: "Schedule not found" });
+    return;
   }
 
-  const generated = generateSchedule(
-    schedule.yearMonth,
-    nurses,
-    rules,
-    requirements,
-    constraints
-  );
+  const detail = await regenerateScheduleDetail(wardId, schedule, {
+    targetDates: body.dates,
+    overwriteManualEdits: body.overwriteManualEdits,
+    priorityMode: body.priorityMode as
+      | "balanced"
+      | "fairness"
+      | "coverage"
+      | "new_nurse_protection"
+      | undefined,
+  });
 
-  if (generated.length > 0) {
-    await db.insert(scheduleEntriesTable).values(
-      generated.map((e) => ({
-        scheduleId,
-        nurseId: e.nurseId,
-        date: e.date,
-        shiftType: e.shiftType,
-        isManualEdit: false,
-      }))
-    );
+  res.json(detail);
+});
+
+// POST /api/wards/:wardId/schedules/:scheduleId/repair
+router.post("/:scheduleId/repair", async (req, res) => {
+  const { wardId, scheduleId } = RepairScheduleParams.parse({
+    wardId: Number(req.params.wardId),
+    scheduleId: Number(req.params.scheduleId),
+  });
+  const body = RepairScheduleBody.parse(req.body ?? {});
+
+  const [schedule] = await db
+    .select()
+    .from(schedulesTable)
+    .where(and(eq(schedulesTable.id, scheduleId), eq(schedulesTable.wardId, wardId)));
+  if (!schedule) {
+    res.status(404).json({ error: "Schedule not found" });
+    return;
   }
 
-  // Run validation
-  const allEntries = await db
+  const issues = await persistValidationResults(scheduleId, wardId, schedule.yearMonth);
+  const conflictDates = [...new Set(
+    issues
+      .filter((issue) => issue.severity === "critical" && issue.date)
+      .map((issue) => issue.date as string)
+  )];
+
+  if (conflictDates.length === 0) {
+    const detail = await getScheduleDetail(wardId, scheduleId);
+    res.json(detail);
+    return;
+  }
+
+  const detail = await regenerateScheduleDetail(wardId, schedule, {
+    targetDates: conflictDates,
+    overwriteManualEdits: body.overwriteManualEdits,
+    priorityMode: body.priorityMode as
+      | "balanced"
+      | "fairness"
+      | "coverage"
+      | "new_nurse_protection"
+      | undefined,
+  });
+
+  res.json(detail);
+});
+
+// GET /api/wards/:wardId/schedules/:scheduleId/recommendations
+router.get("/:scheduleId/recommendations", async (req, res) => {
+  const { wardId, scheduleId } = GetScheduleRecommendationsParams.parse({
+    wardId: Number(req.params.wardId),
+    scheduleId: Number(req.params.scheduleId),
+  });
+
+  const [schedule] = await db
+    .select()
+    .from(schedulesTable)
+    .where(and(eq(schedulesTable.id, scheduleId), eq(schedulesTable.wardId, wardId)));
+  if (!schedule) {
+    res.status(404).json({ error: "Schedule not found" });
+    return;
+  }
+
+  await persistValidationResults(scheduleId, wardId, schedule.yearMonth);
+
+  const { nurses, rules, requirements, constraints } =
+    await loadScheduleGenerationContext(wardId, schedule.yearMonth);
+  if (!rules) {
+    res.json({
+      totalIssues: 0,
+      actionableIssues: 0,
+      unresolvedCriticalCount: 0,
+      items: [],
+    });
+    return;
+  }
+
+  const entries = await db
     .select()
     .from(scheduleEntriesTable)
     .where(eq(scheduleEntriesTable.scheduleId, scheduleId));
-
-  const issues = validateSchedule(allEntries, nurses, rules, requirements);
-
-  // Save validation results
-  await db
-    .delete(validationResultsTable)
+  const validationResults = await db
+    .select()
+    .from(validationResultsTable)
     .where(eq(validationResultsTable.scheduleId, scheduleId));
 
-  if (issues.length > 0) {
-    await db.insert(validationResultsTable).values(
-      issues.map((issue) => ({
-        scheduleId,
-        severity: issue.severity,
-        ruleCode: issue.ruleCode,
-        message: issue.message,
-        date: issue.date,
-        nurseId: issue.nurseId,
-        shiftType: issue.shiftType,
-      }))
-    );
-  }
-
-  await db
-    .update(schedulesTable)
-    .set({ updatedAt: new Date() })
-    .where(eq(schedulesTable.id, scheduleId));
-
-  const detail = await getScheduleDetail(wardId, scheduleId);
-  res.json(detail);
+  res.json(
+    buildScheduleRecommendations({
+      entries,
+      nurses,
+      rules,
+      requirements,
+      constraints,
+      validationResults,
+    })
+  );
 });
 
 // POST /api/wards/:wardId/schedules/:scheduleId/validate
@@ -386,29 +582,7 @@ router.post("/:scheduleId/validate", async (req, res) => {
     .where(and(eq(schedulesTable.id, scheduleId), eq(schedulesTable.wardId, wardId)));
   if (!schedule) { res.status(404).json({ error: "Schedule not found" }); return; }
 
-  const nurses = await db.select().from(nursesTable).where(eq(nursesTable.wardId, wardId));
-  const [rules] = await db.select().from(wardRulesTable).where(eq(wardRulesTable.wardId, wardId));
-  const requirements = await db.select().from(dailyRequirementsTable).where(eq(dailyRequirementsTable.wardId, wardId));
-  const allEntries = await db.select().from(scheduleEntriesTable).where(eq(scheduleEntriesTable.scheduleId, scheduleId));
-
-  if (!rules) { res.json([]); return; }
-
-  const issues = validateSchedule(allEntries, nurses, rules, requirements);
-
-  await db.delete(validationResultsTable).where(eq(validationResultsTable.scheduleId, scheduleId));
-  if (issues.length > 0) {
-    await db.insert(validationResultsTable).values(
-      issues.map((issue) => ({
-        scheduleId,
-        severity: issue.severity,
-        ruleCode: issue.ruleCode,
-        message: issue.message,
-        date: issue.date,
-        nurseId: issue.nurseId,
-        shiftType: issue.shiftType,
-      }))
-    );
-  }
+  await persistValidationResults(scheduleId, wardId, schedule.yearMonth);
 
   // Return with nurse names
   const results = await db

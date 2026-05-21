@@ -1294,6 +1294,10 @@ components:
           type: ["string", "null"]
         shiftType:
           type: ["string", "null"]
+        sourceNurseId:
+          type: ["integer", "null"]
+        sourceNurseName:
+          type: ["string", "null"]
         shortageCount:
           type: ["integer", "null"]
         strictCandidateCount:

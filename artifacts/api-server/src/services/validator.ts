@@ -260,6 +260,11 @@ export function validateSchedule(
         return nurse?.experienceLevel !== "new";
       });
 
+      const nightKeepAssigned = assigned.filter((entry) => {
+        const nurse = nurseMap.get(entry.nurseId);
+        return nurse?.isNightKeep;
+      });
+
       if (experienced.length < rules.minExperiencedPerShift && assigned.length > 0) {
         issues.push({
           severity: "warning",
@@ -269,6 +274,52 @@ export function validateSchedule(
           shiftType,
         });
       }
+
+      if (shiftType === "N" && nightKeepAssigned.length > 1) {
+        issues.push({
+          severity: "warning",
+          ruleCode: "NIGHT_KEEP_CLUSTERED",
+          message: `${date} N조에 나이트 전담 간호사가 ${nightKeepAssigned.length}명 함께 배정되었습니다.`,
+          date,
+          shiftType,
+        });
+      }
+
+      if ((shiftType === "D" || shiftType === "E") && nightKeepAssigned.length > 0) {
+        for (const entry of nightKeepAssigned) {
+          const nurse = nurseMap.get(entry.nurseId);
+          issues.push({
+            severity: "warning",
+            ruleCode: "NIGHT_KEEP_NON_NIGHT_SHIFT",
+            message: `${nurse?.name ?? `#${entry.nurseId}`}: 나이트 전담 간호사가 ${shiftType} 근무에 배정되었습니다.`,
+            date,
+            nurseId: entry.nurseId,
+            shiftType,
+          });
+        }
+      }
+    }
+  }
+
+  const nightKeepNightCounts = nurses
+    .filter((nurse) => nurse.isNightKeep)
+    .map((nurse) => {
+      const byDate = entriesByNurseDate.get(nurse.id);
+      const count = [...(byDate?.values() ?? [])].filter((entry) => entry.shiftType === "N").length;
+      return { nurse, count };
+    });
+
+  if (nightKeepNightCounts.length > 1) {
+    const counts = nightKeepNightCounts.map((item) => item.count);
+    const maxCount = Math.max(...counts);
+    const minCount = Math.min(...counts);
+
+    if (maxCount - minCount >= 3) {
+      issues.push({
+        severity: "warning",
+        ruleCode: "NIGHT_KEEP_IMBALANCE",
+        message: `나이트 전담 간호사 간 월간 N 횟수 편차가 큽니다. (최대 ${maxCount}회 / 최소 ${minCount}회)`,
+      });
     }
   }
 

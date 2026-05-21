@@ -44,6 +44,21 @@ const SHIFT_CYCLE = ["D", "E", "N", "OFF", ""] as const;
 type ShiftType = (typeof SHIFT_CYCLE)[number];
 type PriorityMode = "balanced" | "fairness" | "coverage" | "new_nurse_protection";
 type MobileSheetMode = "validation" | "recommendations" | null;
+type RecommendationCandidateView = {
+  nurseId: number;
+  nurseName: string;
+  currentShift: string;
+  tier?: "strict" | "fallback";
+  cautions?: string[];
+};
+type RecommendationItemView = {
+  id: string;
+  type: string;
+  date?: string;
+  shiftType?: string;
+  sourceNurseId?: number | null;
+  sourceNurseName?: string | null;
+};
 
 const SHIFT_COLORS: Record<string, string> = {
   D: "border border-[hsl(var(--shift-d))]/40 bg-[hsl(var(--shift-d))]/20 font-bold text-[hsl(var(--shift-d))]",
@@ -72,6 +87,55 @@ const PRIORITY_MODE_LABELS: Record<PriorityMode, string> = {
   coverage: "TO 우선",
   new_nurse_protection: "신규 보호 우선",
 };
+
+function getRecommendationDecisionMeta(item: {
+  shortageCount?: number | null;
+  strictCandidateCount: number;
+  fallbackCandidateCount: number;
+}) {
+  const shortageCount = item.shortageCount ?? 0;
+  const totalCandidates = item.strictCandidateCount + item.fallbackCandidateCount;
+
+  if (shortageCount > 0) {
+    if (item.strictCandidateCount >= shortageCount) {
+      return {
+        label: "규칙 내 가능",
+        className: "border-emerald-200 bg-emerald-50 text-emerald-700",
+      };
+    }
+
+    if (totalCandidates >= shortageCount && totalCandidates > 0) {
+      return {
+        label: "차선 선택 필요",
+        className: "border-amber-200 bg-amber-50 text-amber-700",
+      };
+    }
+
+    return {
+      label: "추가 인력 필요",
+      className: "border-rose-200 bg-rose-50 text-rose-700",
+    };
+  }
+
+  if (item.strictCandidateCount > 0) {
+    return {
+      label: "대체 가능",
+      className: "border-emerald-200 bg-emerald-50 text-emerald-700",
+    };
+  }
+
+  if (item.fallbackCandidateCount > 0) {
+    return {
+      label: "수동 판단 필요",
+      className: "border-amber-200 bg-amber-50 text-amber-700",
+    };
+  }
+
+  return {
+    label: "후보 없음",
+    className: "border-slate-200 bg-slate-100 text-slate-700",
+  };
+}
 
 export default function SchedulePage() {
   const params = useParams<{ wardId: string }>();
@@ -206,6 +270,43 @@ export default function SchedulePage() {
     const index = SHIFT_CYCLE.indexOf(current as ShiftType);
     const next = SHIFT_CYCLE[(index + 1) % SHIFT_CYCLE.length];
     setPendingEdits((previous) => ({ ...previous, [`${nurseId}:${date}`]: next }));
+  }
+
+  function handleApplyRecommendation(
+    rawItem: RecommendationItemView,
+    rawCandidate: RecommendationCandidateView
+  ) {
+    if (!rawItem.date || !rawItem.shiftType) {
+      toast({
+        title: "바로 반영할 수 없는 제안입니다.",
+        description: "날짜와 근무가 확정된 제안만 자동 반영할 수 있습니다.",
+        variant: "destructive",
+      });
+      return;
+    }
+
+    setPendingEdits((previous) => {
+      const next = {
+        ...previous,
+        [`${rawCandidate.nurseId}:${rawItem.date}`]: rawItem.shiftType!,
+      };
+
+      if (rawItem.sourceNurseId && rawItem.sourceNurseId !== rawCandidate.nurseId) {
+        next[`${rawItem.sourceNurseId}:${rawItem.date}`] = "OFF";
+      }
+
+      return next;
+    });
+
+    toast({
+      title: `${rawCandidate.nurseName} 후보를 반영했습니다.`,
+      description:
+        rawCandidate.tier === "fallback" && rawCandidate.cautions && rawCandidate.cautions.length > 0
+          ? `차선 후보로 반영했습니다. 주의: ${rawCandidate.cautions[0]} 저장하면 확정됩니다.`
+          : rawItem.sourceNurseName
+            ? `${rawItem.sourceNurseName} 간호사 근무를 비우고 ${rawCandidate.nurseName} 간호사를 ${rawItem.shiftType}에 배치했습니다. 저장하면 확정됩니다.`
+            : `${rawCandidate.nurseName} 간호사를 ${rawItem.date.slice(5)} ${rawItem.shiftType}에 배치했습니다. 저장하면 확정됩니다.`,
+    });
   }
 
   function invalidateScheduleQueries(scheduleId: number) {
@@ -656,6 +757,11 @@ export default function SchedulePage() {
                           : "border-slate-200"
                     )}
                   >
+                    {(() => {
+                      const decisionMeta = getRecommendationDecisionMeta(item);
+
+                      return (
+                        <>
                     <div className="mb-2 flex items-start justify-between gap-2">
                       <div className="min-w-0">
                         <div className="mb-1 flex items-center gap-1.5">
@@ -664,20 +770,49 @@ export default function SchedulePage() {
                         </div>
                         <p className="text-[11px] text-muted-foreground">{item.summary}</p>
                       </div>
-                      {item.shortageCount ? (
-                        <Badge variant="destructive" className="h-5 shrink-0 text-[10px]">
-                          부족 {item.shortageCount}명
-                        </Badge>
-                      ) : (
-                        <Badge variant="outline" className="h-5 shrink-0 text-[10px]">
-                          {item.type === "rule_conflict" ? "규칙 충돌" : "검토 필요"}
-                        </Badge>
-                      )}
+                      <div className="flex shrink-0 flex-col items-end gap-1">
+                        {item.shortageCount ? (
+                          <Badge variant="destructive" className="h-5 text-[10px]">
+                            부족 {item.shortageCount}명
+                          </Badge>
+                        ) : (
+                          <Badge variant="outline" className="h-5 text-[10px]">
+                            {item.type === "rule_conflict"
+                              ? "규칙 충돌"
+                              : item.type === "fairness_warning"
+                                ? "공정성 확인"
+                                : "검토 필요"}
+                          </Badge>
+                        )}
+                        <span
+                          className={cn(
+                            "rounded-full border px-2 py-0.5 text-[10px] font-medium",
+                            decisionMeta.className
+                          )}
+                        >
+                          {decisionMeta.label}
+                        </span>
+                      </div>
                     </div>
 
                     <div className="rounded-lg border border-slate-200/80 bg-slate-50/70 px-2.5 py-2 text-[11px] text-slate-700">
                       {item.actionText}
                     </div>
+
+                    {(item.date || item.shiftType) && (
+                      <div className="mt-2 flex flex-wrap gap-1.5 text-[10px] text-muted-foreground">
+                        {item.date && (
+                          <Badge variant="secondary" className="h-5 bg-slate-100 px-1.5 text-[10px]">
+                            조정 날짜 {item.date.slice(5)}
+                          </Badge>
+                        )}
+                        {item.shiftType && (
+                          <Badge variant="secondary" className="h-5 bg-slate-100 px-1.5 text-[10px]">
+                            권장 {item.shiftType === "OFF" ? "OFF" : `${item.shiftType} 배치`}
+                          </Badge>
+                        )}
+                      </div>
+                    )}
 
                     {item.candidates.length > 0 && (
                       <div className="mt-2 space-y-1.5">
@@ -716,7 +851,8 @@ export default function SchedulePage() {
                                 </Badge>
                               </div>
                               <span className="text-[10px] text-muted-foreground">
-                                현재 {candidate.currentShift === "OFF" ? "OFF" : candidate.currentShift}
+                                변경 예상 {candidate.currentShift === "OFF" ? "OFF" : candidate.currentShift} →{" "}
+                                {item.shiftType === "OFF" ? "OFF" : item.shiftType ? `${item.shiftType} 배치` : "근무 조정"}
                               </span>
                             </div>
 
@@ -730,10 +866,29 @@ export default function SchedulePage() {
                                 </p>
                               ))}
                             </div>
+
+                            <div className="mt-2 flex justify-end">
+                              <Button
+                                size="sm"
+                                variant="outline"
+                                className="h-7 text-[11px]"
+                                onClick={() =>
+                                  handleApplyRecommendation(
+                                    item as RecommendationItemView,
+                                    candidate as RecommendationCandidateView
+                                  )
+                                }
+                              >
+                                후보 적용
+                              </Button>
+                            </div>
                           </div>
                         ))}
                       </div>
                     )}
+                        </>
+                      );
+                    })()}
                   </div>
                 ))}
               </div>
@@ -955,6 +1110,9 @@ export default function SchedulePage() {
         mode={mobileSheetMode}
         recommendations={recommendations}
         validationResults={validationResults}
+        onApplyCandidate={(item, candidate) =>
+          handleApplyRecommendation(item as RecommendationItemView, candidate as RecommendationCandidateView)
+        }
         onOpenChange={(open) => {
           if (!open) {
             setMobileSheetMode(null);

@@ -21,10 +21,18 @@ interface NurseState {
   consecutiveWork: number;
   consecutiveNight: number;
   forcedOffRemaining: number;
+  nightRecoveryRemaining: number;
   nightCount: number;
   assignedWorkDays: number;
   weekendAssignments: number;
   holidayAssignments: number;
+}
+
+interface ConstraintMaps {
+  fixedOffByNurse: Map<number, Set<string>>;
+  preferredOffByNurse: Map<number, Set<string>>;
+  forbiddenShiftByNurse: Map<number, Map<string, Set<string>>>;
+  forbiddenShiftByMonth: Map<number, Map<string, Set<string>>>;
 }
 
 function getDaysInMonth(yearMonth: string): string[] {
@@ -32,9 +40,8 @@ function getDaysInMonth(yearMonth: string): string[] {
   const daysInMonth = new Date(year, month, 0).getDate();
   const days: string[] = [];
 
-  for (let d = 1; d <= daysInMonth; d++) {
-    const day = d.toString().padStart(2, "0");
-    days.push(`${yearMonth}-${day}`);
+  for (let dayIndex = 1; dayIndex <= daysInMonth; dayIndex += 1) {
+    days.push(`${yearMonth}-${String(dayIndex).padStart(2, "0")}`);
   }
 
   return days;
@@ -81,22 +88,7 @@ function buildSameShiftGroups(pairRules: PairRule[]): Map<number, number[]> {
   return groups;
 }
 
-export function generateSchedule(
-  yearMonth: string,
-  nurses: Nurse[],
-  rules: WardRule,
-  requirements: DailyRequirement[],
-  constraints: NurseConstraint[],
-  pairRules: PairRule[] = [],
-  options: GenerateScheduleOptions = {}
-): GeneratedEntry[] {
-  const days = getDaysInMonth(yearMonth);
-  const entries: GeneratedEntry[] = [];
-  const priorityMode = options.priorityMode ?? "balanced";
-
-  const nurseById = new Map(nurses.map((nurse) => [nurse.id, nurse]));
-  const sameShiftGroups = buildSameShiftGroups(pairRules);
-
+function buildConstraintMaps(constraints: NurseConstraint[]): ConstraintMaps {
   const fixedOffByNurse = new Map<number, Set<string>>();
   const preferredOffByNurse = new Map<number, Set<string>>();
   const forbiddenShiftByNurse = new Map<number, Map<string, Set<string>>>();
@@ -149,13 +141,35 @@ export function generateSchedule(
     }
   }
 
+  return {
+    fixedOffByNurse,
+    preferredOffByNurse,
+    forbiddenShiftByNurse,
+    forbiddenShiftByMonth,
+  };
+}
+
+export function generateSchedule(
+  yearMonth: string,
+  nurses: Nurse[],
+  rules: WardRule,
+  requirements: DailyRequirement[],
+  constraints: NurseConstraint[],
+  pairRules: PairRule[] = [],
+  options: GenerateScheduleOptions = {}
+): GeneratedEntry[] {
+  const days = getDaysInMonth(yearMonth);
+  const entries: GeneratedEntry[] = [];
+  const priorityMode = options.priorityMode ?? "balanced";
+
+  const nurseById = new Map(nurses.map((nurse) => [nurse.id, nurse]));
+  const sameShiftGroups = buildSameShiftGroups(pairRules);
+  const constraintMaps = buildConstraintMaps(constraints);
+
   const requirementByKey = new Map<string, number>();
   const holidayByDate = new Map<string, boolean>();
   for (const requirement of requirements) {
-    requirementByKey.set(
-      `${requirement.date}:${requirement.shiftType}`,
-      requirement.requiredCount
-    );
+    requirementByKey.set(`${requirement.date}:${requirement.shiftType}`, requirement.requiredCount);
     holidayByDate.set(
       requirement.date,
       holidayByDate.get(requirement.date) === true || requirement.isHoliday
@@ -169,6 +183,7 @@ export function generateSchedule(
       consecutiveWork: 0,
       consecutiveNight: 0,
       forcedOffRemaining: 0,
+      nightRecoveryRemaining: 0,
       nightCount: 0,
       assignedWorkDays: 0,
       weekendAssignments: 0,
@@ -185,15 +200,23 @@ export function generateSchedule(
     return holidayByDate.get(date) ?? isWeekend(date);
   }
 
+  function getGroupForNurse(nurseId: number): number[] {
+    return sameShiftGroups.get(nurseId) ?? [nurseId];
+  }
+
   function canAssignBase(nurse: Nurse, shift: string, date: string): boolean {
     const state = nurseState.get(nurse.id)!;
 
-    if (fixedOffByNurse.get(nurse.id)?.has(date)) return false;
-    if (forbiddenShiftByNurse.get(nurse.id)?.get(date)?.has(shift)) return false;
-    if (forbiddenShiftByMonth.get(nurse.id)?.get(yearMonth)?.has(shift)) return false;
+    if (constraintMaps.fixedOffByNurse.get(nurse.id)?.has(date)) return false;
+    if (constraintMaps.forbiddenShiftByNurse.get(nurse.id)?.get(date)?.has(shift)) return false;
+    if (constraintMaps.forbiddenShiftByMonth.get(nurse.id)?.get(yearMonth)?.has(shift)) return false;
     if (!nurse.allowedShifts.includes(shift)) return false;
-    if (state.forcedOffRemaining > 0) return false;
 
+    // Night-keep nurses are treated as dedicated night resources in the generator.
+    if (nurse.isNightKeep && shift !== "N") return false;
+
+    if (state.forcedOffRemaining > 0) return false;
+    if (state.nightRecoveryRemaining > 0) return false;
     if (state.consecutiveWork >= rules.maxConsecutiveWorkDays) return false;
 
     if (state.lastShift === "N" && state.consecutiveNight > 0 && shift !== "N") {
@@ -214,91 +237,13 @@ export function generateSchedule(
     return true;
   }
 
-  function getGroupForNurse(nurseId: number): number[] {
-    return sameShiftGroups.get(nurseId) ?? [nurseId];
-  }
-
-  function scoreCandidateGroup(
-    groupIds: number[],
-    shift: string,
-    date: string,
-    assignedToday: Map<number, string>,
-    needed: number
-  ): number {
-    const weekend = isWeekend(date);
-    const holiday = isHoliday(date);
-    const assignedIdsForShift = [...assignedToday.entries()]
-      .filter(([, assignedShift]) => assignedShift === shift)
-      .map(([assignedNurseId]) => assignedNurseId);
-    const projectedIds = [...new Set([...assignedIdsForShift, ...groupIds])];
-    const projectedNurses = projectedIds
-      .map((groupNurseId) => nurseById.get(groupNurseId))
-      .filter((nurse): nurse is Nurse => Boolean(nurse));
-
-    const projectedNewCount = projectedNurses.filter(
-      (nurse) => nurse.experienceLevel === "new"
-    ).length;
-    const projectedExperiencedCount = projectedNurses.length - projectedNewCount;
-    const projectedRatio =
-      projectedNurses.length > 0 ? projectedNewCount / projectedNurses.length : 0;
-
-    let score = 0;
-
-    for (const groupNurseId of groupIds) {
-      const nurse = nurseById.get(groupNurseId)!;
-      const state = nurseState.get(groupNurseId)!;
-      const prefersOff = preferredOffByNurse.get(groupNurseId)?.has(date) ?? false;
-
-      score += state.assignedWorkDays * (priorityMode === "coverage" ? 6 : 10);
-      score += state.consecutiveWork * 3;
-      score += shift === "N" ? state.nightCount * 8 : state.nightCount * 2;
-
-      if (rules.weekendFairness && weekend) {
-        score += state.weekendAssignments * (priorityMode === "fairness" ? 14 : 8);
-      }
-
-      if (rules.holidayFairness && holiday) {
-        score += state.holidayAssignments * (priorityMode === "fairness" ? 16 : 10);
-      }
-
-      if (prefersOff) {
-        score += priorityMode === "coverage" ? 40 : 85;
-      }
-
-      if (shift === "N" && nurse.isNightKeep) score -= 35;
-      if (shift !== "N" && nurse.isNightKeep) score += 45;
-
-      if (nurse.experienceLevel !== "new" && projectedExperiencedCount < rules.minExperiencedPerShift) {
-        score -= 24;
-      }
-
-      if (priorityMode === "new_nurse_protection" && nurse.experienceLevel === "new") {
-        score += 24;
-      }
-    }
-
-    if (projectedRatio > rules.maxNewNurseRatioPerShift) {
-      score += priorityMode === "new_nurse_protection" ? 220 : 140;
-    }
-
-    if (shift === "N" && projectedNewCount > 0) {
-      score += priorityMode === "new_nurse_protection" ? 160 : 90;
-    }
-
-    if (projectedExperiencedCount < rules.minExperiencedPerShift && projectedIds.length >= needed) {
-      score += 180;
-    }
-
-    return score;
-  }
-
   function canAssignGroup(
     nurseId: number,
     shift: string,
     date: string,
     assignedToday: Map<number, string>,
     currentFilled: number,
-    needed: number
+    targetFilled: number
   ): number[] | null {
     const groupIds = getGroupForNurse(nurseId);
     const unassignedIds: number[] = [];
@@ -317,8 +262,99 @@ export function generateSchedule(
       unassignedIds.push(memberId);
     }
 
-    if (currentFilled + unassignedIds.length > needed) return null;
+    if (currentFilled + unassignedIds.length > targetFilled) return null;
     return unassignedIds;
+  }
+
+  function scoreCandidateGroup(
+    groupIds: number[],
+    shift: string,
+    date: string,
+    assignedToday: Map<number, string>,
+    needed: number
+  ): number {
+    const weekend = isWeekend(date);
+    const holiday = isHoliday(date);
+
+    const assignedIdsForShift = [...assignedToday.entries()]
+      .filter(([, assignedShift]) => assignedShift === shift)
+      .map(([assignedNurseId]) => assignedNurseId);
+    const projectedIds = [...new Set([...assignedIdsForShift, ...groupIds])];
+    const projectedNurses = projectedIds
+      .map((groupNurseId) => nurseById.get(groupNurseId))
+      .filter((nurse): nurse is Nurse => Boolean(nurse));
+
+    const projectedNewCount = projectedNurses.filter((nurse) => nurse.experienceLevel === "new").length;
+    const projectedExperiencedCount = projectedNurses.length - projectedNewCount;
+    const projectedRatio = projectedNurses.length > 0 ? projectedNewCount / projectedNurses.length : 0;
+    const projectedNightKeepCount = projectedNurses.filter((nurse) => nurse.isNightKeep).length;
+
+    let score = 0;
+
+    for (const groupNurseId of groupIds) {
+      const nurse = nurseById.get(groupNurseId)!;
+      const state = nurseState.get(groupNurseId)!;
+      const prefersOff = constraintMaps.preferredOffByNurse.get(groupNurseId)?.has(date) ?? false;
+
+      score += state.assignedWorkDays * (priorityMode === "coverage" ? 6 : 10);
+      score += state.consecutiveWork * 3;
+      score += shift === "N" ? state.nightCount * (nurse.isNightKeep ? 5 : 8) : state.nightCount * 2;
+
+      if (rules.weekendFairness && weekend) {
+        score += state.weekendAssignments * (priorityMode === "fairness" ? 14 : 8);
+      }
+
+      if (rules.holidayFairness && holiday) {
+        score += state.holidayAssignments * (priorityMode === "fairness" ? 16 : 10);
+      }
+
+      if (prefersOff) {
+        score += priorityMode === "coverage" ? 40 : 85;
+      }
+
+      if (shift === "N") {
+        if (state.lastShift === "N" && state.consecutiveNight > 0) {
+          score -= nurse.isNightKeep ? 45 : 28;
+          if (state.consecutiveNight === rules.maxConsecutiveNightShifts - 1) {
+            score -= nurse.isNightKeep ? 18 : 10;
+          }
+        } else {
+          score += nurse.isNightKeep ? 12 : 20;
+        }
+
+        if (nurse.isNightKeep) {
+          score -= 50;
+        }
+      }
+
+      if (nurse.experienceLevel !== "new" && projectedExperiencedCount < rules.minExperiencedPerShift) {
+        score -= 24;
+      }
+
+      if (priorityMode === "new_nurse_protection" && nurse.experienceLevel === "new") {
+        score += 24;
+      }
+    }
+
+    if (shift === "N" && projectedNightKeepCount > 1) {
+      score += (projectedNightKeepCount - 1) * 90;
+    }
+
+    if (projectedRatio > rules.maxNewNurseRatioPerShift) {
+      score += shift === "N" ? 220 : priorityMode === "new_nurse_protection" ? 220 : 140;
+    }
+
+    if (shift === "N" && projectedNewCount > 0) {
+      score += projectedExperiencedCount > 0
+        ? (priorityMode === "new_nurse_protection" ? 95 : 55)
+        : 180;
+    }
+
+    if (projectedExperiencedCount < rules.minExperiencedPerShift && projectedIds.length >= needed) {
+      score += shift === "N" ? 260 : 180;
+    }
+
+    return score;
   }
 
   function sortCandidates(candidates: Nurse[], shift: string): Nurse[] {
@@ -326,16 +362,20 @@ export function generateSchedule(
       const leftState = nurseState.get(left.id)!;
       const rightState = nurseState.get(right.id)!;
 
-      if (shift === "N" && left.isNightKeep !== right.isNightKeep) {
-        return left.isNightKeep ? -1 : 1;
-      }
+      if (shift === "N") {
+        if (left.isNightKeep !== right.isNightKeep) {
+          return left.isNightKeep ? -1 : 1;
+        }
 
-      if (shift !== "N" && left.isNightKeep !== right.isNightKeep) {
-        return left.isNightKeep ? 1 : -1;
-      }
+        const leftContinuesNight = leftState.lastShift === "N" && leftState.consecutiveNight > 0 ? 0 : 1;
+        const rightContinuesNight = rightState.lastShift === "N" && rightState.consecutiveNight > 0 ? 0 : 1;
+        if (leftContinuesNight !== rightContinuesNight) {
+          return leftContinuesNight - rightContinuesNight;
+        }
 
-      if (shift === "N" && leftState.nightCount !== rightState.nightCount) {
-        return leftState.nightCount - rightState.nightCount;
+        if (leftState.nightCount !== rightState.nightCount) {
+          return leftState.nightCount - rightState.nightCount;
+        }
       }
 
       if (leftState.assignedWorkDays !== rightState.assignedWorkDays) {
@@ -350,16 +390,93 @@ export function generateSchedule(
     });
   }
 
+  function fillShiftToTarget(
+    candidates: Nurse[],
+    shift: string,
+    date: string,
+    assignedToday: Map<number, string>,
+    needed: number,
+    targetFilled: number
+  ) {
+    let filled = [...assignedToday.values()].filter((assignedShift) => assignedShift === shift).length;
+
+    while (filled < targetFilled) {
+      let selectedGroupIds: number[] | null = null;
+      let selectedScore = Number.POSITIVE_INFINITY;
+
+      for (const nurse of candidates) {
+        if (assignedToday.has(nurse.id)) continue;
+
+        const assignableIds = canAssignGroup(
+          nurse.id,
+          shift,
+          date,
+          assignedToday,
+          filled,
+          targetFilled
+        );
+
+        if (!assignableIds || assignableIds.length === 0) continue;
+
+        const score = scoreCandidateGroup(assignableIds, shift, date, assignedToday, needed);
+        if (score < selectedScore) {
+          selectedScore = score;
+          selectedGroupIds = assignableIds;
+        }
+      }
+
+      if (!selectedGroupIds) break;
+
+      for (const assignableId of selectedGroupIds) {
+        assignedToday.set(assignableId, shift);
+      }
+
+      filled += selectedGroupIds.length;
+    }
+  }
+
   for (const date of days) {
     const assignedToday = new Map<number, string>();
-    const shiftAssigned: Record<string, number> = { D: 0, E: 0, N: 0 };
-    const shiftNeeded: Record<string, number> = {
+    const shiftNeeded: Record<"D" | "E" | "N", number> = {
       D: requirementByKey.get(`${date}:D`) ?? 3,
       E: requirementByKey.get(`${date}:E`) ?? 3,
       N: requirementByKey.get(`${date}:N`) ?? 2,
     };
 
-    for (const shift of ["D", "E", "N"]) {
+    const nightCandidates = sortCandidates(
+      nurses.filter((nurse) => canAssignBase(nurse, "N", date)),
+      "N"
+    );
+    const nightKeepCandidates = nightCandidates.filter((nurse) => nurse.isNightKeep);
+    const generalNightCandidates = nightCandidates.filter((nurse) => !nurse.isNightKeep);
+
+    // 1) Reserve at most one night-keep nurse first to avoid clustering them on the same date.
+    if (shiftNeeded.N > 0 && nightKeepCandidates.length > 0) {
+      fillShiftToTarget(
+        nightKeepCandidates,
+        "N",
+        date,
+        assignedToday,
+        shiftNeeded.N,
+        Math.min(1, shiftNeeded.N)
+      );
+    }
+
+    // 2) Fill remaining night slots with general nurses under the usual fairness constraints.
+    fillShiftToTarget(
+      generalNightCandidates,
+      "N",
+      date,
+      assignedToday,
+      shiftNeeded.N,
+      shiftNeeded.N
+    );
+
+    // 3) If night still remains uncovered, leave it blank and surface a recommendation later.
+    // This avoids silently clustering multiple dedicated night nurses on the same date
+    // or forcing a hard-to-justify fallback assignment.
+
+    for (const shift of ["D", "E"] as const) {
       const needed = shiftNeeded[shift];
       if (needed <= 0) continue;
 
@@ -371,45 +488,7 @@ export function generateSchedule(
         shift
       );
 
-      let filled = shiftAssigned[shift];
-
-      while (filled < needed) {
-        let selectedGroupIds: number[] | null = null;
-        let selectedScore = Number.POSITIVE_INFINITY;
-
-        for (const nurse of eligible) {
-          if (assignedToday.has(nurse.id)) continue;
-
-          const assignableIds = canAssignGroup(
-            nurse.id,
-            shift,
-            date,
-            assignedToday,
-            filled,
-            needed
-          );
-
-          if (!assignableIds || assignableIds.length === 0) continue;
-
-          const score = scoreCandidateGroup(assignableIds, shift, date, assignedToday, needed);
-          if (score < selectedScore) {
-            selectedScore = score;
-            selectedGroupIds = assignableIds;
-          }
-        }
-
-        if (!selectedGroupIds) {
-          break;
-        }
-
-        for (const assignableId of selectedGroupIds) {
-          assignedToday.set(assignableId, shift);
-        }
-
-        filled += selectedGroupIds.length;
-      }
-
-      shiftAssigned[shift] = filled;
+      fillShiftToTarget(eligible, shift, date, assignedToday, needed, needed);
     }
 
     for (const nurse of nurses) {
@@ -429,12 +508,15 @@ export function generateSchedule(
 
       if (shift === "OFF") {
         let forcedOffRemaining = state.forcedOffRemaining;
+        let nightRecoveryRemaining = state.nightRecoveryRemaining;
 
         if (state.lastShift === "N" && state.consecutiveNight > 0) {
-          forcedOffRemaining = Math.max(
-            forcedOffRemaining,
+          nightRecoveryRemaining = Math.max(
+            nightRecoveryRemaining,
             Math.max(0, rules.offDaysAfterNightShifts - 1)
           );
+        } else if (nightRecoveryRemaining > 0) {
+          nightRecoveryRemaining -= 1;
         }
 
         if (state.consecutiveWork >= rules.maxConsecutiveWorkDays) {
@@ -447,10 +529,12 @@ export function generateSchedule(
         }
 
         state.forcedOffRemaining = forcedOffRemaining;
+        state.nightRecoveryRemaining = nightRecoveryRemaining;
         state.consecutiveWork = 0;
         state.consecutiveNight = 0;
       } else {
         state.forcedOffRemaining = 0;
+        state.nightRecoveryRemaining = 0;
         state.consecutiveWork += 1;
         state.assignedWorkDays += 1;
 

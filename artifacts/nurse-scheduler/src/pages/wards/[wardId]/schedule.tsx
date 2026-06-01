@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useState } from "react";
+﻿import { useEffect, useMemo, useState } from "react";
 import { useParams } from "wouter";
 import {
   useCreateSchedule,
@@ -33,10 +33,29 @@ import {
 } from "lucide-react";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
+import { Input } from "@/components/ui/input";
+import {
+  Dialog,
+  DialogContent,
+  DialogDescription,
+  DialogFooter,
+  DialogHeader,
+  DialogTitle,
+} from "@/components/ui/dialog";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 import { Skeleton } from "@/components/ui/skeleton";
 import { useIsMobile } from "@/hooks/use-mobile";
 import { useToast } from "@/hooks/use-toast";
+import {
+  DAYS_KR,
+  getExperienceLabel,
+  getRecommendationDecisionMeta,
+  getRecommendationTypeLabel,
+  getSuggestedShiftLabel,
+  getValidationRuleLabel,
+  getValidationSummary,
+  PRIORITY_MODE_LABELS,
+} from "@/lib/schedule-copy";
 import { cn } from "@/lib/utils";
 import { MobileIssuesSheet, MobileScheduleWorkspace } from "@/components/schedule/mobile-schedule-workspace";
 
@@ -44,20 +63,34 @@ const SHIFT_CYCLE = ["D", "E", "N", "OFF", ""] as const;
 type ShiftType = (typeof SHIFT_CYCLE)[number];
 type PriorityMode = "balanced" | "fairness" | "coverage" | "new_nurse_protection";
 type MobileSheetMode = "validation" | "recommendations" | null;
+type ValidationFilter = "all" | "critical" | "warning" | "info";
+type RecommendationStatusFilter = "all" | RecommendationFollowUpStatus;
 type RecommendationCandidateView = {
   nurseId: number;
   nurseName: string;
   currentShift: string;
+  experienceLevel?: string;
+  reasons: string[];
   tier?: "strict" | "fallback";
-  cautions?: string[];
+  cautions: string[];
 };
 type RecommendationItemView = {
   id: string;
   type: string;
   date?: string;
   shiftType?: string;
+  title?: string;
   sourceNurseId?: number | null;
   sourceNurseName?: string | null;
+  strictCandidateCount?: number;
+  fallbackCandidateCount?: number;
+  shortageCount?: number | null;
+  candidates?: RecommendationCandidateView[];
+};
+type RecommendationFollowUpStatus = "new" | "reviewing" | "requested" | "on_hold" | "done";
+type RecommendationFollowUp = {
+  status: RecommendationFollowUpStatus;
+  note: string;
 };
 
 const SHIFT_COLORS: Record<string, string> = {
@@ -78,63 +111,26 @@ const SEVERITY_BG: Record<string, string> = {
   warning: "border-amber-400/30 bg-amber-50",
   info: "border-blue-300/30 bg-blue-50",
 };
-
-const DAYS_KR = ["일", "월", "화", "수", "목", "금", "토"];
-
-const PRIORITY_MODE_LABELS: Record<PriorityMode, string> = {
-  balanced: "균형 우선",
-  fairness: "공정성 우선",
-  coverage: "TO 우선",
-  new_nurse_protection: "신규 보호 우선",
+const RECOMMENDATION_FOLLOW_UP_STORAGE_KEY = "schedule-recommendation-follow-up-v1";
+const FOLLOW_UP_STATUS_LABELS: Record<RecommendationFollowUpStatus, string> = {
+  new: "미처리",
+  reviewing: "검토 중",
+  requested: "지원 요청",
+  on_hold: "보류",
+  done: "처리 완료",
 };
 
-function getRecommendationDecisionMeta(item: {
-  shortageCount?: number | null;
-  strictCandidateCount: number;
-  fallbackCandidateCount: number;
-}) {
-  const shortageCount = item.shortageCount ?? 0;
-  const totalCandidates = item.strictCandidateCount + item.fallbackCandidateCount;
+function loadRecommendationFollowUps() {
+  if (typeof window === "undefined") return {} as Record<string, RecommendationFollowUp>;
 
-  if (shortageCount > 0) {
-    if (item.strictCandidateCount >= shortageCount) {
-      return {
-        label: "규칙 내 가능",
-        className: "border-emerald-200 bg-emerald-50 text-emerald-700",
-      };
-    }
-
-    if (totalCandidates >= shortageCount && totalCandidates > 0) {
-      return {
-        label: "차선 선택 필요",
-        className: "border-amber-200 bg-amber-50 text-amber-700",
-      };
-    }
-
-    return {
-      label: "추가 인력 필요",
-      className: "border-rose-200 bg-rose-50 text-rose-700",
-    };
+  try {
+    const raw = window.localStorage.getItem(RECOMMENDATION_FOLLOW_UP_STORAGE_KEY);
+    if (!raw) return {};
+    const parsed = JSON.parse(raw);
+    return parsed && typeof parsed === "object" ? (parsed as Record<string, RecommendationFollowUp>) : {};
+  } catch {
+    return {};
   }
-
-  if (item.strictCandidateCount > 0) {
-    return {
-      label: "대체 가능",
-      className: "border-emerald-200 bg-emerald-50 text-emerald-700",
-    };
-  }
-
-  if (item.fallbackCandidateCount > 0) {
-    return {
-      label: "수동 판단 필요",
-      className: "border-amber-200 bg-amber-50 text-amber-700",
-    };
-  }
-
-  return {
-    label: "후보 없음",
-    className: "border-slate-200 bg-slate-100 text-slate-700",
-  };
 }
 
 export default function SchedulePage() {
@@ -150,6 +146,19 @@ export default function SchedulePage() {
   const [selectedRange, setSelectedRange] = useState("week-1");
   const [mobileFocusedDate, setMobileFocusedDate] = useState("");
   const [mobileSheetMode, setMobileSheetMode] = useState<MobileSheetMode>(null);
+  const [validationFilter, setValidationFilter] = useState<ValidationFilter>("all");
+  const [recommendationStatusFilter, setRecommendationStatusFilter] =
+    useState<RecommendationStatusFilter>("all");
+  const [recommendationNoteOnly, setRecommendationNoteOnly] = useState(false);
+  const [applyPreview, setApplyPreview] = useState<{
+    item: RecommendationItemView;
+    candidate: RecommendationCandidateView;
+  } | null>(null);
+  const [recommendationFollowUps, setRecommendationFollowUps] = useState<Record<string, RecommendationFollowUp>>({});
+  const [bulkApplyPreview, setBulkApplyPreview] = useState<{
+    pairs: Array<{ item: RecommendationItemView; candidate: RecommendationCandidateView }>;
+    skippedCount: number;
+  } | null>(null);
 
   const { data: schedules } = useListSchedules(wardId);
   const { data: wardNurses } = useListNurses(wardId);
@@ -183,6 +192,18 @@ export default function SchedulePage() {
       setSelectedScheduleId(activeScheduleId);
     }
   }, [activeScheduleId, selectedScheduleId]);
+
+  useEffect(() => {
+    setRecommendationFollowUps(loadRecommendationFollowUps());
+  }, []);
+
+  useEffect(() => {
+    if (typeof window === "undefined") return;
+    window.localStorage.setItem(
+      RECOMMENDATION_FOLLOW_UP_STORAGE_KEY,
+      JSON.stringify(recommendationFollowUps)
+    );
+  }, [recommendationFollowUps]);
 
   const days = useMemo(
     () =>
@@ -251,13 +272,126 @@ export default function SchedulePage() {
   const criticals = validationResults.filter((item) => item.severity === "critical");
   const warnings = validationResults.filter((item) => item.severity === "warning");
   const infos = validationResults.filter((item) => item.severity === "info");
+  const filteredValidationResults =
+    validationFilter === "all"
+      ? validationResults
+      : validationResults.filter((item) => item.severity === validationFilter);
   const noSchedule = !selectedScheduleId && (!monthSchedules || monthSchedules.length === 0);
+  const shortageRecommendations = useMemo(
+    () =>
+      (recommendations?.items ?? []).filter(
+        (item): item is RecommendationItemView =>
+          Boolean((item as RecommendationItemView).shortageCount)
+      ),
+    [recommendations]
+  );
+  const recommendationStatusCounts = useMemo(() => {
+    return shortageRecommendations.reduce<Record<RecommendationFollowUpStatus, number>>(
+      (counts, item) => {
+        const status = getRecommendationFollowUp(item).status;
+        counts[status] += 1;
+        return counts;
+      },
+      {
+        new: 0,
+        reviewing: 0,
+        requested: 0,
+        on_hold: 0,
+        done: 0,
+      }
+    );
+  }, [shortageRecommendations, recommendationFollowUps]);
+  const recommendationNoteCount = useMemo(
+    () =>
+      shortageRecommendations.filter((item) => {
+        const note = getRecommendationFollowUp(item).note.trim();
+        return note.length > 0;
+      }).length,
+    [shortageRecommendations, recommendationFollowUps]
+  );
+  const filteredRecommendationItems = useMemo(() => {
+    const items = recommendations?.items ?? [];
+    return items.filter((item) => {
+      const recommendationItem = item as RecommendationItemView;
+      const isShortageItem = Boolean(recommendationItem.shortageCount);
+
+      if (recommendationStatusFilter !== "all") {
+        if (!isShortageItem) return false;
+        if (getRecommendationFollowUp(recommendationItem).status !== recommendationStatusFilter) {
+          return false;
+        }
+      }
+
+      if (recommendationNoteOnly) {
+        if (!isShortageItem) return false;
+        if (getRecommendationFollowUp(recommendationItem).note.trim().length === 0) {
+          return false;
+        }
+      }
+
+      return true;
+    });
+  }, [recommendationNoteOnly, recommendationStatusFilter, recommendationFollowUps, recommendations]);
+  const bulkApplicableRecommendations = useMemo(() => {
+    if (!recommendations) return [];
+
+    return filteredRecommendationItems
+      .map((item) => {
+        const strictCandidate = item.candidates.find((candidate) => candidate.tier === "strict");
+        return strictCandidate && item.date && item.shiftType
+          ? {
+              item: item as RecommendationItemView,
+              candidate: strictCandidate as RecommendationCandidateView,
+            }
+          : null;
+      })
+      .filter((value): value is { item: RecommendationItemView; candidate: RecommendationCandidateView } => value !== null);
+  }, [filteredRecommendationItems, recommendations]);
 
   const EXP_COLORS: Record<string, string> = {
     new: "border-amber-200 bg-amber-50",
     experienced: "",
     senior: "border-teal-200 bg-teal-50/40",
   };
+
+  function buildRecommendationEditPatch(
+    item: RecommendationItemView,
+    candidate: RecommendationCandidateView
+  ) {
+    if (!item.date || !item.shiftType) return null;
+
+    const entries: Record<string, string> = {
+      [`${candidate.nurseId}:${item.date}`]: item.shiftType,
+    };
+
+    if (item.sourceNurseId && item.sourceNurseId !== candidate.nurseId) {
+      entries[`${item.sourceNurseId}:${item.date}`] = "OFF";
+    }
+
+    return entries;
+  }
+
+  function getFollowUpKey(item: RecommendationItemView) {
+    return `${wardId}:${selectedScheduleId ?? 0}:${item.id}`;
+  }
+
+  function getRecommendationFollowUp(item: RecommendationItemView): RecommendationFollowUp {
+    return recommendationFollowUps[getFollowUpKey(item)] ?? { status: "new", note: "" };
+  }
+
+  function updateRecommendationFollowUp(
+    item: RecommendationItemView,
+    patch: Partial<RecommendationFollowUp>
+  ) {
+    const key = getFollowUpKey(item);
+    setRecommendationFollowUps((previous) => ({
+      ...previous,
+      [key]: {
+        status: patch.status ?? previous[key]?.status ?? "new",
+        note: patch.note ?? previous[key]?.note ?? "",
+      },
+    }));
+  }
 
   function getShift(nurseId: number, date: string): string {
     const editKey = `${nurseId}:${date}`;
@@ -272,41 +406,119 @@ export default function SchedulePage() {
     setPendingEdits((previous) => ({ ...previous, [`${nurseId}:${date}`]: next }));
   }
 
-  function handleApplyRecommendation(
+  function requestApplyRecommendation(
     rawItem: RecommendationItemView,
     rawCandidate: RecommendationCandidateView
   ) {
     if (!rawItem.date || !rawItem.shiftType) {
       toast({
-        title: "바로 반영할 수 없는 제안입니다.",
-        description: "날짜와 근무가 확정된 제안만 자동 반영할 수 있습니다.",
+        title: "바로 적용할 수 없는 제안입니다.",
+        description: "날짜와 근무가 명확한 추천만 스케줄에 반영할 수 있습니다.",
         variant: "destructive",
       });
       return;
     }
 
+    setApplyPreview({ item: rawItem, candidate: rawCandidate });
+  }
+
+  function confirmApplyRecommendation() {
+    if (!applyPreview) return;
+
+    const { item: rawItem, candidate: rawCandidate } = applyPreview;
+    const patch = buildRecommendationEditPatch(rawItem, rawCandidate);
+
+    if (!patch) {
+      toast({
+        title: "추천 반영에 필요한 정보가 부족합니다.",
+        variant: "destructive",
+      });
+      setApplyPreview(null);
+      return;
+    }
+
     setPendingEdits((previous) => {
-      const next = {
-        ...previous,
-        [`${rawCandidate.nurseId}:${rawItem.date}`]: rawItem.shiftType!,
-      };
-
-      if (rawItem.sourceNurseId && rawItem.sourceNurseId !== rawCandidate.nurseId) {
-        next[`${rawItem.sourceNurseId}:${rawItem.date}`] = "OFF";
-      }
-
-      return next;
+      return { ...previous, ...patch };
     });
 
     toast({
-      title: `${rawCandidate.nurseName} 후보를 반영했습니다.`,
+      title: `${rawCandidate.nurseName} 간호사 후보를 임시 반영했습니다.`,
       description:
         rawCandidate.tier === "fallback" && rawCandidate.cautions && rawCandidate.cautions.length > 0
-          ? `차선 후보로 반영했습니다. 주의: ${rawCandidate.cautions[0]} 저장하면 확정됩니다.`
+          ? `차선 후보입니다. 저장 전에 주의사항을 다시 확인해 주세요. ${rawCandidate.cautions[0]}`
           : rawItem.sourceNurseName
-            ? `${rawItem.sourceNurseName} 간호사 근무를 비우고 ${rawCandidate.nurseName} 간호사를 ${rawItem.shiftType}에 배치했습니다. 저장하면 확정됩니다.`
-            : `${rawCandidate.nurseName} 간호사를 ${rawItem.date.slice(5)} ${rawItem.shiftType}에 배치했습니다. 저장하면 확정됩니다.`,
+            ? `${rawItem.sourceNurseName} 간호사의 같은 날짜 근무를 비우고 ${rawCandidate.nurseName} 간호사를 ${rawItem.shiftType}로 배치했습니다.`
+            : `${rawCandidate.nurseName} 간호사를 ${rawItem.date.slice(5)} ${rawItem.shiftType} 근무에 배치했습니다.`,
     });
+
+    setShowValidation(true);
+    if (isMobile) {
+      setMobileSheetMode("validation");
+    }
+    setApplyPreview(null);
+  }
+
+  function requestBulkApplyRecommendations() {
+    const groupedPairs = bulkApplicableRecommendations;
+
+    if (groupedPairs.length === 0) {
+      toast({
+        title: "한 번에 반영할 우선 후보가 없습니다.",
+        description: "날짜와 근무가 명확한 우선 후보가 생기면 여기서 바로 반영할 수 있습니다.",
+      });
+      return;
+    }
+
+    const usedKeys = new Set<string>();
+    const pairs: Array<{ item: RecommendationItemView; candidate: RecommendationCandidateView }> = [];
+    let skippedCount = 0;
+
+    for (const pair of groupedPairs) {
+      const assignmentKey = `${pair.candidate.nurseId}:${pair.item.date}`;
+      const sourceKey =
+        pair.item.sourceNurseId && pair.item.sourceNurseId !== pair.candidate.nurseId
+          ? `${pair.item.sourceNurseId}:${pair.item.date}`
+          : null;
+
+      if (usedKeys.has(assignmentKey) || (sourceKey && usedKeys.has(sourceKey))) {
+        skippedCount += 1;
+        continue;
+      }
+
+      usedKeys.add(assignmentKey);
+      if (sourceKey) usedKeys.add(sourceKey);
+      pairs.push(pair);
+    }
+
+    setBulkApplyPreview({ pairs, skippedCount });
+  }
+
+  function confirmBulkApplyRecommendations() {
+    if (!bulkApplyPreview) return;
+
+    const patch: Record<string, string> = {};
+
+    for (const pair of bulkApplyPreview.pairs) {
+      const nextPatch = buildRecommendationEditPatch(pair.item, pair.candidate);
+      if (!nextPatch) continue;
+      Object.assign(patch, nextPatch);
+    }
+
+    setPendingEdits((previous) => ({ ...previous, ...patch }));
+
+    toast({
+      title: `${bulkApplyPreview.pairs.length}건의 우선 후보를 임시 반영했습니다.`,
+      description:
+        bulkApplyPreview.skippedCount > 0
+          ? `겹치는 후보 ${bulkApplyPreview.skippedCount}건은 제외했습니다. 저장 전에 스케줄 표와 검증 패널을 함께 확인해 주세요.`
+          : "저장 전까지는 임시 변경 상태입니다. 검증 패널에서 영향 범위를 함께 확인해 주세요.",
+    });
+
+    setShowValidation(true);
+    if (isMobile) {
+      setMobileSheetMode("validation");
+    }
+    setBulkApplyPreview(null);
   }
 
   function invalidateScheduleQueries(scheduleId: number) {
@@ -321,7 +533,7 @@ export default function SchedulePage() {
     if (Object.keys(pendingEdits).length === 0) return true;
     toast({
       title: "저장되지 않은 수정이 있습니다.",
-      description: "재생성 전에 먼저 수동 수정 내용을 저장해주세요.",
+      description: "재생성이나 검증 전에 먼저 수동 수정 내용을 저장해 주세요.",
       variant: "destructive",
     });
     return false;
@@ -358,7 +570,7 @@ export default function SchedulePage() {
           setShowValidation(true);
           setPendingEdits({});
           toast({
-            title: overwriteManualEdits ? "월 전체를 다시 생성했습니다." : "수동 수정을 유지하고 다시 생성했습니다.",
+            title: overwriteManualEdits ? "스케줄 전체를 다시 생성했습니다." : "수동 수정 내용을 유지하고 다시 생성했습니다.",
           });
         },
         onError: (error: Error) =>
@@ -370,7 +582,7 @@ export default function SchedulePage() {
   function handlePartialRegenerate() {
     if (!selectedScheduleId || !ensureNoPendingEdits()) return;
     if (selectedRangeDates.length === 0) {
-      toast({ title: "부분 재생성할 주차를 먼저 선택해주세요.", variant: "destructive" });
+      toast({ title: "부분 재생성할 주차를 먼저 선택해 주세요.", variant: "destructive" });
       return;
     }
 
@@ -615,7 +827,7 @@ export default function SchedulePage() {
                 data-testid="button-regenerate-full"
               >
                 <Zap className="mr-1 h-3.5 w-3.5" />
-              {generateSchedule.isPending ? "재생성 중..." : isMobile ? "전체" : "전체 재생성"}
+                {generateSchedule.isPending ? "재생성 중..." : isMobile ? "전체" : "전체 재생성"}
               </Button>
 
               <Button
@@ -627,7 +839,7 @@ export default function SchedulePage() {
                 data-testid="button-regenerate-partial"
               >
                 <RefreshCcw className="mr-1 h-3.5 w-3.5" />
-              {regeneratePartialSchedule.isPending ? "부분 재생성 중..." : isMobile ? "부분" : "부분 재생성"}
+                {regeneratePartialSchedule.isPending ? "부분 재생성 중..." : isMobile ? "부분" : "부분 재생성"}
               </Button>
 
               <Button
@@ -639,7 +851,7 @@ export default function SchedulePage() {
                 data-testid="button-repair-schedule"
               >
                 <Wand2 className="mr-1 h-3.5 w-3.5" />
-              {repairSchedule.isPending ? "보정 중..." : isMobile ? "보정" : "오류 보정"}
+                {repairSchedule.isPending ? "보정 중..." : isMobile ? "보정" : "오류 보정"}
               </Button>
 
               <Button
@@ -663,7 +875,7 @@ export default function SchedulePage() {
                   data-testid="button-save-schedule"
                 >
                   <Save className="mr-1 h-3.5 w-3.5" />
-                  저장({Object.keys(pendingEdits).length})
+                  저장 ({Object.keys(pendingEdits).length})
                 </Button>
               )}
 
@@ -676,7 +888,7 @@ export default function SchedulePage() {
                   data-testid="button-toggle-recommendations"
                 >
                   <Lightbulb className="mr-1 h-3.5 w-3.5" />
-                  제안
+                  해결 제안
                   {recommendations.unresolvedCriticalCount > 0 && (
                     <Badge variant="destructive" className="ml-1 h-4 px-1 text-[10px]">
                       {recommendations.unresolvedCriticalCount}
@@ -708,7 +920,7 @@ export default function SchedulePage() {
       {selectedScheduleId && (
         <div className="flex flex-wrap items-center gap-2 border-b bg-muted/20 px-3 py-2 text-xs text-muted-foreground">
           <span>생성 모드: {PRIORITY_MODE_LABELS[priorityMode]}</span>
-          <span>수동 수정 정책: {overwriteManualEdits ? "덮어쓰기 허용" : "기존 수정 유지"}</span>
+          <span>수동 수정 처리: {overwriteManualEdits ? "덮어쓰기 허용" : "기존 수정 유지"}</span>
           <span>부분 재생성 범위: {weekOptions.find((option) => option.value === selectedRange)?.label ?? "-"}</span>
         </div>
       )}
@@ -719,15 +931,15 @@ export default function SchedulePage() {
             <div>
               <h2 className="text-sm font-semibold text-foreground">해결 제안 대시보드</h2>
               <p className="text-[11px] text-muted-foreground">
-                검증 결과를 바탕으로 우선 해결이 필요한 항목과 추가 배치 후보를 정리했습니다.
+                검증 결과를 기준으로 먼저 살펴볼 문제와 적용 가능한 추천 후보를 정리합니다.
               </p>
             </div>
-            <div className="flex flex-wrap gap-1.5 text-[11px]">
+            <div className="flex flex-wrap items-center gap-1.5 text-[11px]">
               <Badge variant="secondary" className="h-6 bg-white/80">
                 전체 문제 {recommendations.totalIssues}건
               </Badge>
               <Badge variant="secondary" className="h-6 bg-white/80">
-                해결 제안 {recommendations.actionableIssues}건
+                적용 가능 제안 {recommendations.actionableIssues}건
               </Badge>
               <Badge
                 variant={recommendations.unresolvedCriticalCount > 0 ? "destructive" : "secondary"}
@@ -735,17 +947,61 @@ export default function SchedulePage() {
               >
                 필수 수정 {recommendations.unresolvedCriticalCount}건
               </Badge>
+              <Button
+                size="sm"
+                variant="outline"
+                className="h-6 text-[11px]"
+                onClick={requestBulkApplyRecommendations}
+                disabled={bulkApplicableRecommendations.length === 0}
+              >
+                우선 후보 일괄 반영 {bulkApplicableRecommendations.length > 0 ? `(${bulkApplicableRecommendations.length})` : ""}
+              </Button>
+            </div>
+            <div className="flex flex-wrap items-center gap-1.5 text-[11px]">
+              <Button
+                size="sm"
+                variant={recommendationStatusFilter === "all" ? "secondary" : "outline"}
+                className="h-6 text-[11px]"
+                onClick={() => setRecommendationStatusFilter("all")}
+              >
+                전체 {recommendations.items.length}
+              </Button>
+              {(Object.entries(FOLLOW_UP_STATUS_LABELS) as Array<
+                [RecommendationFollowUpStatus, string]
+              >).map(([status, label]) => (
+                <Button
+                  key={status}
+                  size="sm"
+                  variant={recommendationStatusFilter === status ? "secondary" : "outline"}
+                  className="h-6 text-[11px]"
+                  onClick={() => setRecommendationStatusFilter(status)}
+                >
+                  {label} {recommendationStatusCounts[status]}
+                </Button>
+              ))}
+              <Button
+                size="sm"
+                variant={recommendationNoteOnly ? "secondary" : "outline"}
+                className="h-6 text-[11px]"
+                onClick={() => setRecommendationNoteOnly((previous) => !previous)}
+              >
+                메모 있음 {recommendationNoteCount}
+              </Button>
             </div>
           </div>
 
           <div className="max-h-64 overflow-y-auto pr-1">
             {recommendations.items.length === 0 ? (
               <div className="rounded-xl border bg-white/80 p-3 text-sm text-muted-foreground">
-                현재는 별도의 해결 제안이 필요한 문제를 찾지 못했습니다.
+                현재는 별도 조정이 필요한 추천 항목이 없습니다.
+              </div>
+            ) : filteredRecommendationItems.length === 0 ? (
+              <div className="rounded-xl border bg-white/80 p-3 text-sm text-muted-foreground">
+                현재 선택한 필터에 해당하는 추천 카드가 없습니다.
               </div>
             ) : (
               <div className="grid gap-2 xl:grid-cols-2">
-                {recommendations.items.map((item) => (
+                {filteredRecommendationItems.map((item) => (
                   <div
                     key={item.id}
                     className={cn(
@@ -759,6 +1015,7 @@ export default function SchedulePage() {
                   >
                     {(() => {
                       const decisionMeta = getRecommendationDecisionMeta(item);
+                      const followUp = getRecommendationFollowUp(item as RecommendationItemView);
 
                       return (
                         <>
@@ -773,15 +1030,10 @@ export default function SchedulePage() {
                       <div className="flex shrink-0 flex-col items-end gap-1">
                         {item.shortageCount ? (
                           <Badge variant="destructive" className="h-5 text-[10px]">
-                            부족 {item.shortageCount}명
-                          </Badge>
+                            부족 {item.shortageCount}명                          </Badge>
                         ) : (
                           <Badge variant="outline" className="h-5 text-[10px]">
-                            {item.type === "rule_conflict"
-                              ? "규칙 충돌"
-                              : item.type === "fairness_warning"
-                                ? "공정성 확인"
-                                : "검토 필요"}
+                            {getRecommendationTypeLabel(item.type)}
                           </Badge>
                         )}
                         <span
@@ -799,6 +1051,49 @@ export default function SchedulePage() {
                       {item.actionText}
                     </div>
 
+                    {item.shortageCount && item.strictCandidateCount === 0 && (
+                      <div className="mt-2 rounded-lg border border-rose-200 bg-rose-50 px-2.5 py-2 text-[11px] text-rose-700">
+                        내부 인력만으로 바로 채우기 어려운 구간입니다. 차선 후보를 검토하거나 추가 지원 인력을 요청하는 편이 좋습니다.
+                      </div>
+                    )}
+
+                    {item.shortageCount ? (
+                      <div className="mt-2 rounded-lg border border-slate-200 bg-white/80 p-2">
+                        <div className="mb-2 flex flex-wrap items-center justify-between gap-2">
+                          <span className="text-[11px] font-medium text-foreground">부족 인력 처리 메모</span>
+                          <Select
+                            value={followUp.status}
+                            onValueChange={(value) =>
+                              updateRecommendationFollowUp(item as RecommendationItemView, {
+                                status: value as RecommendationFollowUpStatus,
+                              })
+                            }
+                          >
+                            <SelectTrigger className="h-7 w-[120px] text-[11px]">
+                              <SelectValue />
+                            </SelectTrigger>
+                            <SelectContent>
+                              {Object.entries(FOLLOW_UP_STATUS_LABELS).map(([value, label]) => (
+                                <SelectItem key={value} value={value}>
+                                  {label}
+                                </SelectItem>
+                              ))}
+                            </SelectContent>
+                          </Select>
+                        </div>
+                        <Input
+                          value={followUp.note}
+                          onChange={(event) =>
+                            updateRecommendationFollowUp(item as RecommendationItemView, {
+                              note: event.target.value,
+                            })
+                          }
+                          placeholder="예: 플로트 간호사 요청 예정, 오후 회의 후 재확인"
+                          className="h-8 text-[11px]"
+                        />
+                      </div>
+                    ) : null}
+
                     {(item.date || item.shiftType) && (
                       <div className="mt-2 flex flex-wrap gap-1.5 text-[10px] text-muted-foreground">
                         {item.date && (
@@ -808,7 +1103,7 @@ export default function SchedulePage() {
                         )}
                         {item.shiftType && (
                           <Badge variant="secondary" className="h-5 bg-slate-100 px-1.5 text-[10px]">
-                            권장 {item.shiftType === "OFF" ? "OFF" : `${item.shiftType} 배치`}
+                            {getSuggestedShiftLabel(item.shiftType)}
                           </Badge>
                         )}
                       </div>
@@ -817,8 +1112,8 @@ export default function SchedulePage() {
                     {item.candidates.length > 0 && (
                       <div className="mt-2 space-y-1.5">
                         <div className="flex flex-wrap gap-2 text-[10px] text-muted-foreground">
-                          <span>엄격 {item.strictCandidateCount}명</span>
-                          <span>차선 {item.fallbackCandidateCount}명</span>
+                          <span>규칙 내 후보 {item.strictCandidateCount}명</span>
+                          <span>차선 후보 {item.fallbackCandidateCount}명</span>
                         </div>
 
                         {item.candidates.slice(0, 2).map((candidate, index) => (
@@ -837,11 +1132,7 @@ export default function SchedulePage() {
                                   {index + 1}. {candidate.nurseName}
                                 </span>
                                 <Badge variant="outline" className="h-4 bg-white/80 px-1 text-[9px]">
-                                  {candidate.experienceLevel === "new"
-                                    ? "신규"
-                                    : candidate.experienceLevel === "senior"
-                                      ? "책임"
-                                      : "경력"}
+                                  {getExperienceLabel(candidate.experienceLevel)}
                                 </Badge>
                                 <Badge
                                   variant={candidate.tier === "strict" ? "secondary" : "outline"}
@@ -852,17 +1143,17 @@ export default function SchedulePage() {
                               </div>
                               <span className="text-[10px] text-muted-foreground">
                                 변경 예상 {candidate.currentShift === "OFF" ? "OFF" : candidate.currentShift} →{" "}
-                                {item.shiftType === "OFF" ? "OFF" : item.shiftType ? `${item.shiftType} 배치` : "근무 조정"}
+                                {getSuggestedShiftLabel(item.shiftType)}
                               </span>
                             </div>
 
                             <div className="space-y-0.5 text-[11px] text-slate-700">
                               {candidate.reasons.slice(0, 1).map((reason) => (
-                                <p key={reason}>• {reason}</p>
+                                <p key={reason}>- {reason}</p>
                               ))}
                               {candidate.cautions.slice(0, 1).map((caution) => (
                                 <p key={caution} className="text-amber-700">
-                                  • 주의: {caution}
+                                  - 주의: {caution}
                                 </p>
                               ))}
                             </div>
@@ -873,7 +1164,7 @@ export default function SchedulePage() {
                                 variant="outline"
                                 className="h-7 text-[11px]"
                                 onClick={() =>
-                                  handleApplyRecommendation(
+                                  requestApplyRecommendation(
                                     item as RecommendationItemView,
                                     candidate as RecommendationCandidateView
                                   )
@@ -902,7 +1193,7 @@ export default function SchedulePage() {
           {!selectedScheduleId && !isLoading && (
             <div className="flex h-full items-center justify-center text-muted-foreground">
               <div className="text-center">
-                <p className="mb-2 font-medium">이 달의 스케줄이 없습니다.</p>
+                <p className="mb-2 font-medium">아직 이 달의 스케줄이 없습니다.</p>
                 <Button onClick={handleCreate} disabled={createSchedule.isPending} data-testid="button-create-schedule-empty">
                   <Plus className="mr-1.5 h-4 w-4" /> 빈 스케줄 생성
                 </Button>
@@ -938,8 +1229,7 @@ export default function SchedulePage() {
               <thead className="sticky top-0 z-20 bg-card">
                 <tr>
                   <th className="sticky left-0 z-30 min-w-[90px] border-b border-r bg-card p-2 text-left font-medium text-muted-foreground md:w-[120px] md:min-w-[120px]">
-                    간호사
-                  </th>
+                    간호사                  </th>
                   {days.map((date) => {
                     const dayOfWeek = dayjs(date).day();
                     const isWeekend = dayOfWeek === 0 || dayOfWeek === 6;
@@ -1009,7 +1299,7 @@ export default function SchedulePage() {
                                 hasIssue && "ring-1 ring-destructive"
                               )}
                             >
-                              {shift === "OFF" ? "휴" : shift}
+                              {shift === "OFF" ? "OFF" : shift}
                             </span>
                           )}
                         </td>
@@ -1062,8 +1352,7 @@ export default function SchedulePage() {
               <div>
                 <h3 className="text-sm font-semibold">검증 결과</h3>
                 <p className="text-[11px] text-muted-foreground">
-                  필수 {criticals.length}건 · 경고 {warnings.length}건 · 참고 {infos.length}건
-                </p>
+                  필수 {criticals.length}건 · 경고 {warnings.length}건 · 참고 {infos.length}건                </p>
               </div>
               <Button
                 variant="ghost"
@@ -1075,14 +1364,33 @@ export default function SchedulePage() {
               </Button>
             </div>
 
-            {validationResults.length === 0 ? (
+            <div className="flex flex-wrap gap-1.5 border-b px-3 py-2">
+              {[
+                { key: "all", label: "전체", count: validationResults.length },
+                { key: "critical", label: "필수", count: criticals.length },
+                { key: "warning", label: "경고", count: warnings.length },
+                { key: "info", label: "참고", count: infos.length },
+              ].map((option) => (
+                <Button
+                  key={option.key}
+                  variant={validationFilter === option.key ? "default" : "outline"}
+                  size="sm"
+                  className="h-7 text-[11px]"
+                  onClick={() => setValidationFilter(option.key as ValidationFilter)}
+                >
+                  {option.label} {option.count}
+                </Button>
+              ))}
+            </div>
+
+            {filteredValidationResults.length === 0 ? (
               <div className="p-4 text-center text-sm text-muted-foreground">
                 <CheckCircle className="mx-auto mb-2 h-8 w-8 text-green-500 opacity-70" />
-                <p>현재 검증 문제 없음</p>
+                <p>{validationFilter === "all" ? "현재 검증 문제 없음" : "선택한 조건의 검증 문제 없음"}</p>
               </div>
             ) : (
               <div className="space-y-1.5 p-2">
-                {[...criticals, ...warnings, ...infos].map((item) => (
+                {filteredValidationResults.map((item) => (
                   <div
                     key={item.id}
                     className={cn("flex gap-2 rounded border p-2 text-xs", SEVERITY_BG[item.severity] ?? "")}
@@ -1090,7 +1398,12 @@ export default function SchedulePage() {
                   >
                     {SEVERITY_ICONS[item.severity as keyof typeof SEVERITY_ICONS]}
                     <div className="min-w-0 flex-1">
-                      <p className="leading-snug text-foreground">{item.message}</p>
+                      <div className="mb-1 flex items-center gap-1.5">
+                        <Badge variant="outline" className="h-5 text-[10px]">
+                          {getValidationRuleLabel(item.ruleCode)}
+                        </Badge>
+                      </div>
+                      <p className="leading-snug text-foreground">{getValidationSummary(item)}</p>
                       <div className="mt-0.5 flex items-center gap-1.5 text-muted-foreground">
                         {item.date && <span>{item.date.slice(5)}</span>}
                         {item.shiftType && <span className="font-mono font-semibold">{item.shiftType}</span>}
@@ -1105,13 +1418,132 @@ export default function SchedulePage() {
         )}
       </div>
 
+      <Dialog open={!!applyPreview} onOpenChange={(open) => !open && setApplyPreview(null)}>
+        <DialogContent className="sm:max-w-md">
+          <DialogHeader>
+            <DialogTitle>추천 후보를 스케줄에 반영할까요?</DialogTitle>
+            <DialogDescription>
+              저장 전까지는 임시 변경으로만 반영됩니다. 적용 후에는 스케줄 표에서 다시 수정할 수 있습니다.
+            </DialogDescription>
+          </DialogHeader>
+          {applyPreview && (
+            <div className="space-y-3 text-sm">
+              <div className="rounded-xl border bg-muted/30 p-3">
+                <div className="flex flex-wrap items-center gap-2">
+                  <Badge variant="secondary">{applyPreview.item.date?.slice(5)}</Badge>
+                  <Badge variant="secondary">{getSuggestedShiftLabel(applyPreview.item.shiftType)}</Badge>
+                  <Badge
+                    variant={applyPreview.candidate.tier === "strict" ? "secondary" : "outline"}
+                  >
+                    {applyPreview.candidate.tier === "strict" ? "우선 후보" : "차선 후보"}
+                  </Badge>
+                </div>
+                <p className="mt-2 text-foreground">
+                  <span className="font-semibold">{applyPreview.candidate.nurseName}</span> 간호사를{" "}
+                  <span className="font-semibold">
+                    {applyPreview.item.date?.slice(5)} {applyPreview.item.shiftType}
+                  </span>{" "}
+                  근무에 반영합니다.
+                </p>
+                {applyPreview.item.sourceNurseName && (
+                  <p className="mt-1 text-muted-foreground">
+                    기존 {applyPreview.item.sourceNurseName} 간호사의 같은 날짜 근무는 OFF로 조정됩니다.
+                  </p>
+                )}
+              </div>
+
+              <div className="space-y-1 rounded-xl border bg-background p-3">
+                <div className="flex items-center gap-2 text-xs text-muted-foreground">
+                  <span>현재 근무</span>
+                  <span className="font-medium text-foreground">
+                    {applyPreview.candidate.currentShift || "OFF"}
+                  </span>
+                  <span>→</span>
+                  <span className="font-medium text-foreground">
+                    {getSuggestedShiftLabel(applyPreview.item.shiftType)}
+                  </span>
+                </div>
+                {applyPreview.candidate.cautions?.[0] && (
+                  <p className="text-xs text-amber-700">주의: {applyPreview.candidate.cautions[0]}</p>
+                )}
+              </div>
+            </div>
+          )}
+          <DialogFooter>
+            <Button variant="outline" onClick={() => setApplyPreview(null)}>
+              취소
+            </Button>
+            <Button onClick={confirmApplyRecommendation}>임시 반영</Button>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
+
+      <Dialog open={!!bulkApplyPreview} onOpenChange={(open) => !open && setBulkApplyPreview(null)}>
+        <DialogContent className="sm:max-w-lg">
+          <DialogHeader>
+            <DialogTitle>우선 후보를 한 번에 반영할까요?</DialogTitle>
+            <DialogDescription>
+              규칙 안에서 바로 적용 가능한 우선 후보만 임시 반영합니다. 저장 전까지는 다시 수정할 수 있습니다.
+            </DialogDescription>
+          </DialogHeader>
+          {bulkApplyPreview && (
+            <div className="space-y-3 text-sm">
+              <div className="rounded-xl border bg-muted/30 p-3">
+                <div className="flex flex-wrap items-center gap-2">
+                  <Badge variant="secondary">반영 예정 {bulkApplyPreview.pairs.length}건</Badge>
+                  {bulkApplyPreview.skippedCount > 0 && (
+                    <Badge variant="outline">겹쳐서 제외 {bulkApplyPreview.skippedCount}건</Badge>
+                  )}
+                </div>
+                <p className="mt-2 text-muted-foreground">
+                  저장 전까지는 임시 반영 상태입니다. 적용 후에는 검증 패널과 스케줄 표를 함께 확인해 주세요.
+                </p>
+              </div>
+
+              <div className="max-h-64 space-y-2 overflow-y-auto rounded-xl border bg-background p-3">
+                {bulkApplyPreview.pairs.slice(0, 6).map(({ item, candidate }) => (
+                  <div key={`${item.id}:${candidate.nurseId}`} className="rounded-lg border p-2">
+                    <div className="flex flex-wrap items-center gap-2 text-xs">
+                      <Badge variant="secondary">{item.date?.slice(5)}</Badge>
+                      <Badge variant="secondary">{getSuggestedShiftLabel(item.shiftType)}</Badge>
+                      <span className="font-medium text-foreground">{candidate.nurseName}</span>
+                      <span className="text-muted-foreground">
+                        {candidate.currentShift || "OFF"} → {item.shiftType}
+                      </span>
+                    </div>
+                    {candidate.cautions[0] && (
+                      <p className="mt-1 text-xs text-amber-700">주의: {candidate.cautions[0]}</p>
+                    )}
+                  </div>
+                ))}
+                {bulkApplyPreview.pairs.length > 6 && (
+                  <p className="text-xs text-muted-foreground">
+                    외 {bulkApplyPreview.pairs.length - 6}건은 적용 후 스케줄 표에서 확인할 수 있습니다.
+                  </p>
+                )}
+              </div>
+            </div>
+          )}
+          <DialogFooter>
+            <Button variant="outline" onClick={() => setBulkApplyPreview(null)}>
+              취소
+            </Button>
+            <Button onClick={confirmBulkApplyRecommendations}>우선 후보 일괄 반영</Button>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
+
       <MobileIssuesSheet
         open={isMobile && mobileSheetMode !== null}
         mode={mobileSheetMode}
         recommendations={recommendations}
         validationResults={validationResults}
         onApplyCandidate={(item, candidate) =>
-          handleApplyRecommendation(item as RecommendationItemView, candidate as RecommendationCandidateView)
+          requestApplyRecommendation(item as RecommendationItemView, candidate as RecommendationCandidateView)
+        }
+        getRecommendationFollowUp={(item) => getRecommendationFollowUp(item as RecommendationItemView)}
+        onUpdateRecommendationFollowUp={(item, patch) =>
+          updateRecommendationFollowUp(item as RecommendationItemView, patch)
         }
         onOpenChange={(open) => {
           if (!open) {

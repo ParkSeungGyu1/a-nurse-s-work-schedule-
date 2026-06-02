@@ -204,6 +204,19 @@ function buildNightKeepLocks(args: {
     return count;
   }
 
+  function countOtherNightKeepShiftOnDate(
+    nurseId: number,
+    date: string,
+    shift: "N" | "OFF"
+  ) {
+    let count = 0;
+    for (const nurse of nightKeepNurses) {
+      if (nurse.id === nurseId) continue;
+      if (getLock(nurse.id, date) === shift) count += 1;
+    }
+    return count;
+  }
+
   function canPlaceNightKeepBlock(nurse: Nurse, startIndex: number, length: number) {
     const state = planState.get(nurse.id)!;
     const nightLimit = nurse.monthlyNightLimit ?? rules.monthlyMaxNightShifts;
@@ -217,6 +230,7 @@ function buildNightKeepLocks(args: {
       if (!date) return false;
       if (!nurse.allowedShifts.includes("N")) return false;
       if (constraintMaps.fixedOffByNurse.get(nurse.id)?.has(date)) return false;
+      if (constraintMaps.preferredOffByNurse.get(nurse.id)?.has(date)) return false;
       if (constraintMaps.forbiddenShiftByNurse.get(nurse.id)?.get(date)?.has("N")) return false;
       if (constraintMaps.forbiddenShiftByMonth.get(nurse.id)?.get(yearMonth)?.has("N")) return false;
       if (getLock(nurse.id, date)) return false;
@@ -248,8 +262,10 @@ function buildNightKeepLocks(args: {
       const need = remainingNightNeed.get(date) ?? 0;
       score -= need * 18;
 
+      score -= countOtherNightKeepShiftOnDate(nurse.id, date, "OFF") * 22;
+
       if (constraintMaps.preferredOffByNurse.get(nurse.id)?.has(date)) {
-        score += 55;
+        score += 180;
       }
     }
 
@@ -257,8 +273,11 @@ function buildNightKeepLocks(args: {
       const recoveryDate = days[startIndex + length - 1 + recoveryOffset];
       if (!recoveryDate) break;
 
+      score += countOtherNightKeepShiftOnDate(nurse.id, recoveryDate, "OFF") * 24;
+      score -= countOtherNightKeepShiftOnDate(nurse.id, recoveryDate, "N") * 16;
+
       if (constraintMaps.preferredOffByNurse.get(nurse.id)?.has(recoveryDate)) {
-        score -= 8;
+        score -= 42;
       }
     }
 
